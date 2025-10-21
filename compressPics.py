@@ -25,7 +25,9 @@ import concurrent.futures
 # === SETTINGS ===
 MAX_SIZE_MB = 1.5         # Target maximum file size(MB) after compression
 MIN_SIZE_MB = 1.0         # Skip images smaller than this threshold
-SUPPORTED_FORMATS = (     # File extensions eligible for compression
+TARGET_RATIO = 0.25       # Try to compress images to ~25% of original size
+# SUPPORTED_FORMATS unchanged...
+SUPPORTED_FORMATS = (
     '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'
 )
 # =================
@@ -124,9 +126,8 @@ def _save_image_bytes(img: Image.Image, img_format: str, q: int = None, exif_byt
 def compress_to_target_size(img: Image.Image, img_format: str, target_mb: float, exif_bytes: bytes = None) -> bytes:
     """
     Compress image adaptively to reach a target file size (MB).
-    - Uses binary search on compression quality (JPEG/PNG).
-    - Falls back to gradual image downscaling if compression isn’t enough.
     """
+    # widen bounds so search can hit lower qualities when needed
     low, high = 30, 95  # quality search bounds
     best_bytes = None
     best_quality = 85   # reasonable default if search fails
@@ -179,7 +180,10 @@ def compress_image(path: str):
             print(f"⏭️  Skipping small file ({original_size:.2f} MB): {path}")
             return
 
-        print(f"🔧 Compressing ({original_size:.2f} MB): {path}")
+        # compute a target size based on a fraction of the original, but never exceed MAX_SIZE_MB
+        target_mb = min(MAX_SIZE_MB, original_size * TARGET_RATIO)
+
+        print(f"🔧 Compressing ({original_size:.2f} MB) -> target {target_mb:.2f} MB: {path}")
         with Image.open(path) as img:
             # Preserve and normalize EXIF orientation: apply transform then clear orientation tag
             try:
@@ -199,7 +203,7 @@ def compress_image(path: str):
             img = ImageOps.exif_transpose(img)
 
             img_format = img.format or 'JPEG'
-            result = compress_to_target_size(img, img_format, MAX_SIZE_MB, exif_bytes=exif_bytes)
+            result = compress_to_target_size(img, img_format, target_mb, exif_bytes=exif_bytes)
 
             # Write temporary compressed file then replace original
             temp_path = path + ".tmp"
