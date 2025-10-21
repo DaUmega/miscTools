@@ -126,18 +126,33 @@ def _save_image_bytes(img: Image.Image, img_format: str, q: int = None, exif_byt
 def compress_to_target_size(img: Image.Image, img_format: str, target_mb: float, exif_bytes: bytes = None) -> bytes:
     """
     Compress image adaptively to reach a target file size (MB).
+
+    Strategy change:
+    - Try a wider range of JPEG/PNG quality values and remember the smallest output produced.
+    - Return the best quality-only result (keeps original pixel dimensions).
+    - Only perform limited downscaling as a last resort when the result still exceeds MAX_SIZE_MB.
     """
     # widen bounds so search can hit lower qualities when needed
-    low, high = 30, 95  # quality search bounds
+    low, high = 15, 95  # quality search bounds
     best_bytes = None
     best_quality = 85   # reasonable default if search fails
     width, height = img.size
+
+    smallest_bytes = None
+    smallest_size = float('inf')
+    smallest_quality = None
 
     # Binary search: try to find the HIGHEST quality that still fits under target_mb
     while low <= high:
         q = (low + high) // 2
         data = _save_image_bytes(img, img_format, q=q, exif_bytes=exif_bytes)
         size_mb = get_size_mb(data)
+
+        # track the smallest result even if it doesn't reach target
+        if size_mb < smallest_size:
+            smallest_size = size_mb
+            smallest_bytes = data
+            smallest_quality = q
 
         if size_mb <= target_mb:
             # Keep best (highest) quality found so far
@@ -147,29 +162,45 @@ def compress_to_target_size(img: Image.Image, img_format: str, target_mb: float,
         else:
             high = q - 1  # too large — reduce quality
 
-    # If binary search couldn't produce a small-enough file, progressively scale down
-    if best_bytes is None:
-        scale = 0.95  # gentler initial scaling to preserve quality
-        current_img = img
-        while True:
-            new_w = max(1, int(width * scale))
-            new_h = max(1, int(height * scale))
-            if new_w < 2 or new_h < 2:
-                # fallback: force save at best_quality even if huge
-                best_bytes = _save_image_bytes(current_img, img_format, q=best_quality, exif_bytes=exif_bytes)
-                break
+    # If we found a quality-only result that fits target, return it
+    if best_bytes is not None:
+        return best_bytes
 
-            resized = current_img.resize((new_w, new_h), Image.LANCZOS)
-            data = _save_image_bytes(resized, img_format, q=best_quality, exif_bytes=exif_bytes)
-            size_mb = get_size_mb(data)
-            if size_mb <= target_mb or new_w < 200 or new_h < 200:
-                best_bytes = data
-                break
-            # continue scaling down gradually
-            current_img = resized
-            scale *= 0.95
+    # Prefer the best quality-only result (preserve pixels). Only resize if the file still exceeds MAX_SIZE_MB.
+    if smallest_bytes is not None:
+        if smallest_size <= MAX_SIZE_MB:
+            return smallest_bytes
 
-    return best_bytes
+    # Limited downscaling fallback (only if necessary to meet absolute MAX_SIZE_MB).
+    # Do not shrink below a fraction of original dimensions.
+    MAX_DOWNSCALE_FACTOR = 0.8
+    MAX_DOWNSCALE_ITER = 5
+
+    current_img = img
+    scale = 0.95
+    iter_count = 0
+    while iter_count < MAX_DOWNSCALE_ITER:
+        new_w = max(1, int(width * scale))
+        new_h = max(1, int(height * scale))
+        if new_w < 2 or new_h < 2:
+            break
+
+        resized = current_img.resize((new_w, new_h), Image.LANCZOS)
+        data = _save_image_bytes(resized, img_format, q=smallest_quality or best_quality, exif_bytes=exif_bytes)
+        size_mb = get_size_mb(data)
+        if size_mb <= MAX_SIZE_MB or scale <= MAX_DOWNSCALE_FACTOR:
+            return data
+
+        current_img = resized
+        scale *= 0.95
+        iter_count += 1
+
+    # If all else fails, return the best quality-only result (even if > MAX_SIZE_MB)
+    if smallest_bytes is not None:
+        return smallest_bytes
+
+    # Fallback: force save original at best_quality
+    return _save_image_bytes(img, img_format, q=best_quality, exif_bytes=exif_bytes)
 
 
 def compress_image(path: str):
@@ -185,23 +216,15 @@ def compress_image(path: str):
 
         print(f"🔧 Compressing ({original_size:.2f} MB) -> target {target_mb:.2f} MB: {path}")
         with Image.open(path) as img:
-            # Preserve and normalize EXIF orientation: apply transform then clear orientation tag
+            # Preserve EXIF bytes (don't physically transpose/prematurely rotate the image).
+            # This keeps the original pixel dimensions; viewers that honor EXIF orientation will still display correctly.
             try:
                 exif = img.getexif()
-                if exif:
-                    # Set orientation tag to '1' (normal) so saved image is not auto-rotated again by viewers
-                    ORIENTATION_TAG = 274
-                    if ORIENTATION_TAG in exif:
-                        exif[ORIENTATION_TAG] = 1
-                    exif_bytes = exif.tobytes()
-                else:
-                    exif_bytes = None
+                exif_bytes = exif.tobytes() if exif else None
             except Exception:
                 exif_bytes = None
 
-            # Apply EXIF-based transpose to get correct visual orientation for processing
-            img = ImageOps.exif_transpose(img)
-
+            # NOTE: no ImageOps.exif_transpose(img) here — we preserve pixel orientation and EXIF.
             img_format = img.format or 'JPEG'
             result = compress_to_target_size(img, img_format, target_mb, exif_bytes=exif_bytes)
 
