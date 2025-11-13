@@ -1,11 +1,9 @@
-#!/usr/bin/env sh
-# Minimal wifi export/import using nmcli
+#!/usr/bin/env bash
 # Usage: ./wifi-io.sh export file.txt
 #        ./wifi-io.sh import file.txt
 
 set -eu
 
-# Safety check: nmcli must exist
 if ! command -v nmcli >/dev/null 2>&1; then
   echo "Error: nmcli not found. Please install NetworkManager." >&2
   exit 1
