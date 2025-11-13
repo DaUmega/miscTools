@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Usage: ./wifi-io.sh export file.txt
-#        ./wifi-io.sh import file.txt
+# Usage: ./wifiMigrate.sh import|export file.txt
+#        curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/wifiMigrate.sh | bash -s import|export file.txt
 
 set -eu
 
