@@ -84,7 +84,7 @@ if [ ! -f "${SSH_DIR}/id_ed25519" ]; then
     echo ""
 
     command -v xdg-open >/dev/null && xdg-open "https://github.com/settings/keys" >/dev/null 2>&1 &
-    read -p "Press Enter after adding your key to GitHub..."
+    read -p "Press Enter after adding your key to GitHub..." < /dev/tty
 else
     msg "SSH key already exists."
 fi
