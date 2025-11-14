@@ -9,7 +9,7 @@ set -euo pipefail
 # Required: --username, --email
 # Optional: --repos "repo1,repo2", --outdir DIR
 # 
-# Direct Usage: curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/github.sh | bash -s --username NAME --email EMAIL
+# Direct Usage: curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/github.sh | bash -s -- --username NAME --email EMAIL
 # -------------------------------------------------------
 
 USERNAME=""
