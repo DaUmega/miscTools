@@ -82,8 +82,11 @@ if confirm "install MEGAsync"; then
     fi
 fi
 
-if confirm "install VS Code and VLC"; then
+if confirm "install VS Code"; then
     sudo snap install code --classic
+fi
+
+if confirm "install VLC"; then
     sudo snap install vlc
 fi
 
