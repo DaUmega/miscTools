@@ -8,7 +8,23 @@ set -e
 [[ -t 0 ]] || exec </dev/tty
 
 confirm() {
-    read -p "[?] Do you want to $1? [y/N] " choice
+    if [ "${AUTO_ACCEPT:-0}" = "1" ]; then
+        return 0
+    fi
+
+    prompt="[?] Do you want to $1? [y/N] "
+
+    if [ -t 1 ]; then
+        printf "%s" "$prompt"
+        read -r choice
+    elif [ -e /dev/tty ]; then
+        printf "%s" "$prompt" > /dev/tty
+        read -r choice < /dev/tty
+    else
+        echo "[-] Skipped (no tty available)."
+        return 1
+    fi
+
     case "$choice" in
         y|Y ) return 0;;
         * ) echo "[-] Skipped."; return 1;;
