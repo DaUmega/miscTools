@@ -1,30 +1,11 @@
 #!/bin/bash
 
-# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/newUbuntu.sh | bash
+# wget https://raw.githubusercontent.com/DaUmega/miscTools/main/newUbuntu.sh; chmod +x newUbuntu.sh; ./newUbuntu.sh
 
 set -e
 
-# Force interactive mode even when piped
-[[ -t 0 ]] || exec </dev/tty
-
 confirm() {
-    if [ "${AUTO_ACCEPT:-0}" = "1" ]; then
-        return 0
-    fi
-
-    prompt="[?] Do you want to $1? [y/N] "
-
-    if [ -t 1 ]; then
-        printf "%s" "$prompt"
-        read -r choice
-    elif [ -e /dev/tty ]; then
-        printf "%s" "$prompt" > /dev/tty
-        read -r choice < /dev/tty
-    else
-        echo "[-] Skipped (no tty available)."
-        return 1
-    fi
-
+    read -p "[?] Do you want to $1? [y/N] " choice
     case "$choice" in
         y|Y ) return 0;;
         * ) echo "[-] Skipped."; return 1;;
