@@ -4,6 +4,9 @@
 
 set -e
 
+# Force interactive mode even when piped
+[[ -t 0 ]] || exec </dev/tty
+
 confirm() {
     read -p "[?] Do you want to $1? [y/N] " choice
     case "$choice" in
