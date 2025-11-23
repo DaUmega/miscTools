@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunUser.sh | bash -s /path/to/executable
+# Sets up .desktop process as user to auto-run
+# wget https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunUser.sh; chmod +x autoRunUser.sh; ./autoRunUser.sh /path/to/executable
 
 set -e
 

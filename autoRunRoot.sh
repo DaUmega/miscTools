@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sets up systemd process as root to auto-run
-# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunRoot.sh | sudo bash -s /path/to/executable
+# wget https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunRoot.sh; chmod +x autoRunRoot.sh; ./autoRunRoot.sh /path/to/executable
 
 set -e
 
