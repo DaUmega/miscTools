@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/newUbuntu.sh | bash
+
 set -e
 
 confirm() {

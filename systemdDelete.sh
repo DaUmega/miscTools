@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Removes systemd process permanently
+# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunRoot.sh | sudo bash -s <service_name>
 
 SERVICE_INPUT="$1"
 SERVICE_NAME="$SERVICE_INPUT.service"
@@ -13,7 +14,7 @@ echo -e "${GREEN}Systemd Process Removal Script${NC}"
 
 # --- Argument check ---
 if [ -z "$SERVICE_INPUT" ]; then
-  echo -e "${RED}Usage: $0 <service name>${NC}"
+  echo -e "${RED}Usage: $0 <service_name>${NC}"
   exit 1
 fi
 

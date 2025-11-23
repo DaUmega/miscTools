@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# curl -sSL https://raw.githubusercontent.com/DaUmega/miscTools/main/autoRunUser.sh | bash -s /path/to/executable
 
 set -e
 
