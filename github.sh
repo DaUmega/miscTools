@@ -92,15 +92,15 @@ fi
 # -------------------------------------------------------
 # 2. Start SSH Agent
 # -------------------------------------------------------
-if ! pgrep -u "$USER" ssh-agent >/dev/null; then
-    msg "Starting SSH agent..."
-    eval "$(ssh-agent -s)"
-else
-    msg "SSH agent already running."
+msg "Ensuring SSH agent is running..."
+
+if [ -z "${SSH_AUTH_SOCK:-}" ] || [ ! -S "$SSH_AUTH_SOCK" ]; then
+    msg "Starting new SSH agent..."
+    eval "$(ssh-agent -s)" >/dev/null
 fi
 
 msg "Adding SSH key to agent..."
-ssh-add -D || true
+ssh-add -D >/dev/null 2>&1 || true
 ssh-add "${SSH_DIR}/id_ed25519"
 
 # -------------------------------------------------------
