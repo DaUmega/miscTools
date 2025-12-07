@@ -89,7 +89,7 @@ if confirm "install VS Code"; then
 fi
 
 if confirm "install VLC"; then
-    sudo snap install vlc
+    sudo apt install vlc -y
 fi
 
 if confirm "modify GRUB timeout to 3 seconds"; then
