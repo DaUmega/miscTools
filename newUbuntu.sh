@@ -127,6 +127,12 @@ if confirm "install TeamViewer"; then
     rm -f /tmp/teamviewer_amd64.deb
 fi
 
+if confirm "install qBitTorrent"; then
+    sudo add-apt-repository -y ppa:qbittorrent-team/qbittorrent-stable
+    sudo apt update
+    sudo apt install -y qbittorrent
+fi
+
 echo "[*] Cleaning up..."
 sudo apt autoremove -y
 sudo apt autoclean -y
