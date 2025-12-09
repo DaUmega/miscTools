@@ -82,7 +82,7 @@ install_tor_and_ssh() {
     fi
     sudo systemctl restart ssh || sudo systemctl restart sshd || true
   fi
-  echo "Tor and SSH installed and hardened."
+  echo "Tor and SSH installed and hardened. Sometimes you need to run this twice before step 2."
 }
 
 create_hidden_ssh() {
