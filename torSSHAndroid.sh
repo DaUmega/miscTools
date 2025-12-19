@@ -1,5 +1,5 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Direct run: curl -fsSL https://raw.githubusercontent.com/daumega/miscTools/BRANCH/termux_tor_ssh_setup.sh | bash
+# Direct run: curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/torSSHAndroid.sh | bash
 set -euo pipefail
 
 echo "[*] Updating Termux packages..."
