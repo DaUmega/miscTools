@@ -1,4 +1,45 @@
 #!/usr/bin/env python3
+# Dead Man’s Switch
+# This dead man’s switch encrypts a text secret locally, destroys all keys and plaintext, periodically checks for a reset signal.
+# Only releases the encrypted payload to a recipient who already holds the private key.
+# Requiring compromise of both the sender’s system and the recipient’s key to leak the secret.
+#
+# 1) Environment check
+#    - Script refuses to run unless a Python virtual environment is active.
+#
+# 2) Setup mode (`setup`, supports multiple switches via `--id`)
+#    - Creates a private directory: ~/.deadman/<id>
+#    - Generates a dedicated GPG keypair (no passphrase).
+#    - Encrypts the provided secret message with the public key.
+#    - Writes decryption instructions for the recipient.
+#    - Prompts for Gmail API credentials and email recipient.
+#    - Securely shreds the private GPG key and optionally the original secret.
+#    - Creates a timestamp file (`last_reset`) with the current time.
+#    - Writes a config file containing all required metadata.
+#    - Installs a cron job that runs the `check` command every 5 minutes.
+#
+# 3) Normal operation
+#    - User periodically “checks in” by updating the timestamp file.
+#    - As long as the timestamp is recent, nothing happens.
+#
+# 4) Check mode (`check`, run by cron)
+#    - Loads the config and reads the last reset timestamp.
+#    - Compares current time vs. allowed inactivity window.
+#
+# 5) Trigger condition
+#    - If inactivity exceeds the configured number of days:
+#        - Emails the encrypted payload and decryption instructions.
+#        - Increments an internal trigger counter.
+#
+# 6) Self-destruct
+#    - After the second trigger:
+#        - Securely shreds the entire deadman directory.
+#        - Removes the associated cron job.
+#        - Permanently disables the switch.
+#
+# 7) Result
+#    - Recipient receives the encrypted message.
+#    - No sensitive material remains on the originating system.
 
 import os
 import argparse
