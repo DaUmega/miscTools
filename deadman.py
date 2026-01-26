@@ -304,23 +304,121 @@ instruction = DATA_DIR / "HOW_TO_DECRYPT.txt"
 instruction.write_text("""
 HOW TO DECRYPT THIS MESSAGE
 
-You need the PRIVATE KEY that was provided separately.
+You should have received:
+- An encrypted message file (message.asc)
+- A private key file (private.asc), provided to you previously
 
-Install GPG:
+Both files are required to read the secret message.
 
-Windows: https://gpg4win.org/
-macOS:   https://gpgtools.org/
-Linux:   Open Terminal and run: sudo apt install gnupg
 
-Go to the folder/directory where the key file is stored, right click and choose 'Open Terminal/Powershell Here' or similar.
+========================
+STEP 1 — INSTALL GPG
+========================
 
-Then run:
+GPG is the tool used to decrypt this message.
 
-Import key:
+Windows:
+1. Go to: https://gpg4win.org/
+2. Download and install it.
+3. During installation, accept the default options.
+
+macOS:
+1. Go to: https://gpgtools.org/
+2. Download and install it.
+
+Linux (Ubuntu/Debian):
+1. Open “Terminal”
+2. Run:
+   sudo apt install gnupg
+
+
+========================
+STEP 2 — PUT FILES IN ONE FOLDER
+========================
+
+1. Create a new folder somewhere easy to find (for example:
+   Desktop → New Folder → name it “decrypt”)
+
+2. Copy BOTH of these files into that folder:
+   - private.asc
+   - message.asc
+
+IMPORTANT:
+Both files MUST be in the same folder for the next steps to work.
+
+
+========================
+STEP 3 — OPEN A TERMINAL IN THAT FOLDER
+========================
+
+Windows:
+1. Open the folder containing private.asc and message.asc
+2. Hold SHIFT, then RIGHT-CLICK inside the folder
+3. Click:
+   “Open PowerShell window here”
+   (or “Open Terminal here”)
+
+macOS:
+1. Open the folder in Finder
+2. Right-click inside the folder
+3. Click “New Terminal at Folder”
+
+Linux:
+1. Open the folder
+2. Right-click → “Open in Terminal”
+
+
+========================
+STEP 4 — IMPORT THE PRIVATE KEY (ONE TIME ONLY)
+========================
+
+In the terminal window that opened, copy and paste this command:
+
 gpg --import private.asc
 
-Decrypt:
+Press ENTER.
+
+You should see a message saying the key was imported successfully.
+If you see a warning that the key already exists, that is OK.
+
+
+========================
+STEP 5 — DECRYPT THE MESSAGE
+========================
+
+In the SAME terminal window, run:
+
 gpg --decrypt message.asc
+
+The decrypted message will appear directly on the screen.
+
+If asked for confirmation or warnings, you can safely answer “yes”.
+
+
+========================
+TROUBLESHOOTING
+========================
+
+• “File not found” error:
+  Make sure BOTH files are in the same folder
+  and that the terminal was opened from that folder.
+
+• “gpg is not recognized” (Windows):
+  Restart your computer after installing GPG.
+
+• Nothing prints after decrypt:
+  Scroll up in the terminal window — the message may be above.
+
+
+========================
+SECURITY NOTE
+========================
+
+This private key can decrypt this message.
+Do NOT share private.asc with anyone else.
+
+Once you have saved the message safely,
+you may delete private.asc if instructed to do so.
 
 For additional help, try google: How to decrypt a message with GPG
 """)
