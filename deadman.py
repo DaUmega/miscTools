@@ -1,45 +1,64 @@
 #!/usr/bin/env python3
 # Dead Man’s Switch
-# This dead man’s switch encrypts a text secret locally, destroys all keys and plaintext, periodically checks for a reset signal.
-# Only releases the encrypted payload to a recipient who already holds the private key.
-# Requiring compromise of both the sender’s system and the recipient’s key to leak the secret.
 #
-# 1) Environment check
-#    - Script refuses to run unless a Python virtual environment is active.
+# This script implements a local-only dead man’s switch that encrypts a secret message,
+# securely removes all sensitive material, and automatically triggers if the user fails
+# to "check in" within a specified time window. The encrypted payload is sent only to a
+# pre-defined recipient who holds the corresponding private key.
 #
-# 2) Setup mode (`setup`, supports multiple switches via `--id`)
-#    - Creates a private directory: ~/.deadman/<id>
-#    - Generates a dedicated GPG keypair (no passphrase).
+# Security model:
+# - Secret remains encrypted and only the recipient with the private key can decrypt it.
+# - The sender’s system contains no long-term plaintext or private keys after setup.
+# - Compromise requires both the sender’s system and recipient’s private key.
+#
+# Key Features and Workflow:
+#
+# 1) Environment Verification
+#    - Script refuses to run unless executed inside an active Python virtual environment.
+#
+# 2) Setup Mode (`setup`)
+#    - Initializes a dedicated deadman directory: ~/.deadman/<id>
+#    - Generates a GPG keypair without a passphrase.
 #    - Encrypts the provided secret message with the public key.
 #    - Writes decryption instructions for the recipient.
-#    - Prompts for Gmail API credentials and email recipient.
-#    - Securely shreds the private GPG key and optionally the original secret.
-#    - Creates a timestamp file (`last_reset`) with the current time.
-#    - Writes a config file containing all required metadata.
+#    - Prompts for Gmail API credentials and recipient email(s).
+#    - Optionally shreds the original secret file and always shreds the private GPG key.
+#    - Creates a timestamp file (`last_reset`) marking the last “check-in”.
+#    - Saves configuration metadata to `config.json`.
 #    - Installs a cron job that runs the `check` command every 5 minutes.
 #
-# 3) Normal operation
-#    - User periodically “checks in” by updating the timestamp file.
-#    - As long as the timestamp is recent, nothing happens.
+# 3) Normal Operation
+#    - The user periodically “checks in” by updating the timestamp file.
+#    - As long as the timestamp is recent, no action occurs.
 #
-# 4) Check mode (`check`, run by cron)
-#    - Loads the config and reads the last reset timestamp.
-#    - Compares current time vs. allowed inactivity window.
+# 4) Check Mode (`check`, run automatically via cron)
+#    - Reads configuration and last reset timestamp.
+#    - Compares current time against the allowed inactivity window.
+#    - If inactivity exceeds the configured threshold, triggers the dead man’s switch.
 #
-# 5) Trigger condition
-#    - If inactivity exceeds the configured number of days:
-#        - Emails the encrypted payload and decryption instructions.
-#        - Increments an internal trigger counter.
+# 5) Triggering Behavior
+#    - Emails the encrypted payload, decryption instructions and all other contents of ~/.deadman/<id>/data to the recipient.
+#    - Increments an internal trigger counter.
 #
-# 6) Self-destruct
+# 6) Self-Destruct Mechanism
 #    - After the second trigger:
 #        - Securely shreds the entire deadman directory.
 #        - Removes the associated cron job.
 #        - Permanently disables the switch.
 #
-# 7) Result
+# 7) Outcome
 #    - Recipient receives the encrypted message.
 #    - No sensitive material remains on the originating system.
+#
+# Dependencies:
+# - gpg, shred, cron
+# - Python libraries: google-api-python-client, google-auth-httplib2, google-auth-oauthlib
+#
+# Usage Examples:
+#   Setup a new switch:
+#     python deadman.py setup --id myswitch --message secret.txt --venv /path/to/venv
+#   Check manually (normally run via cron):
+#     python deadman.py check --id myswitch
 
 import os
 import argparse
@@ -302,6 +321,8 @@ gpg --import private.asc
 
 Decrypt:
 gpg --decrypt message.asc
+
+For additional help, try google: How to decrypt a message with GPG
 """)
 
 payload_enc = DATA_DIR / "message.asc"
