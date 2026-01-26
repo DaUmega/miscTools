@@ -121,16 +121,19 @@ def remove_cron_job(switch_id: str):
     print("Cron job removed successfully.")
 
 def trigger_deadman(BASE: Path, config: dict, CONFIG_FILE: Path, args_id: str):
-    payload_enc = Path(config["payload"])
-    instruction_file = Path(BASE / "data" / "HOW_TO_DECRYPT.txt")
     trigger_count = config.get("trigger_count", 0)
+    data_dir = BASE / "data"
+    attachments = [
+        p for p in data_dir.iterdir()
+        if p.is_file()
+    ]
 
     send_email(
         BASE,
         config["recipient"],
         "Deadman Switch Triggered",
-        "Attached are the instructions and the encrypted message.",
-        attachments=[instruction_file, payload_enc]
+        "Attached are all files present in the deadman data directory at trigger time.",
+        attachments=attachments
     )
     print(f"Deadman switch triggered! (count {trigger_count + 1}/2)")
 
@@ -274,7 +277,7 @@ Install GPG:
 
 Windows: https://gpg4win.org/
 macOS:   https://gpgtools.org/
-Linux:   sudo apt install gnupg
+Linux:   Open Terminal and run: sudo apt install gnupg
 
 Go to the folder/directory where the key file is stored, right click and choose 'Open Terminal/Powershell Here' or similar.
 
@@ -338,6 +341,8 @@ CONFIG_FILE.write_text(json.dumps({
 
 print("\n[SETUP COMPLETE]")
 print(f"Deadman ID: {switch_id}")
+print(f"Any files placed in the following directory will be sent automatically when the deadman triggers:")
+print(f"  {DATA_DIR}")
 print("\nReset command:")
 print(f"  echo $(date +%s) > {RESET_FILE}")
 
