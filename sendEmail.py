@@ -3,7 +3,7 @@
 # Dependencies: pip install --upgrade google-api-python-client google-auth-httplib2 google-auth-oauthlib
 # GMAIL API SETUP REQUIRED
 # Follow: https://developers.google.com/workspace/gmail/api/quickstart/python
-# Usage: python3 sendemail.py -c path/to/credentials.json -t test@example.com -s title -m body [-a attachment1 attachment2 ...] [--cc cc_email] [--bcc bcc_email]
+# Usage: python3 sendEmail.py -c path/to/credentials.json -t recipient@example.com -s "Subject" -m "Body of the email" --cc "cc1@example.com,cc2@example.com" --bcc "bcc1@example.com,bcc2@example.com" -a file1.txt file2.pdf
 # token.json cannot be re-used in other machines, need fresh authentication using credentials.json
 
 import os
@@ -41,21 +41,25 @@ def get_gmail_service(credentials_path):
     return build('gmail', 'v1', credentials=creds)
 
 def create_message(sender, to, subject, message_text, attachment_paths=None, cc=None, bcc=None):
+    # If multiple emails, join them into comma-separated strings
+    cc_header = ",".join(cc) if isinstance(cc, list) else cc
+    bcc_header = ",".join(bcc) if isinstance(bcc, list) else bcc
+
     if attachment_paths:
         message = MIMEMultipart()
         message['to'], message['from'], message['subject'] = to, sender, subject
-        if cc:
-            message['cc'] = cc
-        if bcc:
-            message['bcc'] = bcc
-        
+        if cc_header:
+            message['cc'] = cc_header
+        if bcc_header:
+            message['bcc'] = bcc_header
+
         # Attach text part
         text_part = MIMEText(message_text)
         message.attach(text_part)
-        
+
         # Attach files
         for attachment_path in attachment_paths:
-            attachment_path = os.path.abspath(attachment_path)  # Ensure absolute path
+            attachment_path = os.path.abspath(attachment_path)
             if not os.path.exists(attachment_path):
                 raise FileNotFoundError(f"Attachment file not found: {attachment_path}")
             with open(attachment_path, 'rb') as f:
@@ -74,10 +78,10 @@ def create_message(sender, to, subject, message_text, attachment_paths=None, cc=
     else:
         message = MIMEText(message_text)
         message['to'], message['from'], message['subject'] = to, sender, subject
-        if cc:
-            message['cc'] = cc
-        if bcc:
-            message['bcc'] = bcc
+        if cc_header:
+            message['cc'] = cc_header
+        if bcc_header:
+            message['bcc'] = bcc_header
     return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')}
 
 def send_email(service, sender, to, subject, message_text, attachment_paths=None, cc=None, bcc=None):
@@ -92,9 +96,13 @@ def main():
     parser.add_argument("-s", "--subject", required=True, help="Email subject")
     parser.add_argument("-m", "--message", required=True, help="Email body")
     parser.add_argument("-a", "--attachment", nargs='*', help="Path(s) to attachment file(s) (optional)")
-    parser.add_argument("--cc", help="CC recipient's email")
-    parser.add_argument("--bcc", help="BCC recipient's email")
+    parser.add_argument("--cc", help="CC recipient(s), comma-separated")
+    parser.add_argument("--bcc", help="BCC recipient(s), comma-separated")
     args = parser.parse_args()
+
+    # Convert CC/BCC to list
+    cc_list = [e.strip() for e in args.cc.split(",") if e.strip()] if args.cc else None
+    bcc_list = [e.strip() for e in args.bcc.split(",") if e.strip()] if args.bcc else None
 
     args.credentials = os.path.abspath(args.credentials)  # Convert to absolute path
     if args.attachment:
@@ -104,7 +112,16 @@ def main():
         raise FileNotFoundError(f"Credentials file not found: {args.credentials}")
 
     service = get_gmail_service(args.credentials)
-    send_email(service, 'me', args.to, args.subject, args.message, args.attachment, args.cc, args.bcc)
+    send_email(
+        service,
+        'me',
+        args.to,
+        args.subject,
+        args.message,
+        attachment_paths=args.attachment,
+        cc=cc_list,
+        bcc=bcc_list
+    )
 
 if __name__ == '__main__':
     main()

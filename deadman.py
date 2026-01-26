@@ -73,7 +73,7 @@ def confirm(msg):
     ans = prompt(f"{msg} [y/N]: ").lower()
     return ans in ("y", "yes")
 
-def send_email(base_dir, to, subject, body, attachments=None):
+def send_email(base_dir, to, subject, body, attachments=None, cc=None, bcc=None):
     cred_path = base_dir / "credentials.json"
     cmd = [
         "python3", str(SENDEMAIL_PATH),
@@ -82,6 +82,14 @@ def send_email(base_dir, to, subject, body, attachments=None):
         "-s", subject,
         "-m", body
     ]
+    if cc:
+        if isinstance(cc, list):
+            cc = ",".join(cc)
+        cmd += ["--cc", cc]
+    if bcc:
+        if isinstance(bcc, list):
+            bcc = ",".join(bcc)
+        cmd += ["--bcc", bcc]
     if attachments:
         attachments = [str(a) for a in attachments]
         cmd += ["-a"] + attachments
@@ -127,13 +135,14 @@ def trigger_deadman(BASE: Path, config: dict, CONFIG_FILE: Path, args_id: str):
         p for p in data_dir.iterdir()
         if p.is_file()
     ]
-
     send_email(
         BASE,
         config["recipient"],
         "Deadman Switch Triggered",
         "Attached are all files present in the deadman data directory at trigger time.",
-        attachments=attachments
+        attachments=attachments,
+        cc=config.get("cc"),
+        bcc=config.get("bcc")
     )
     print(f"Deadman switch triggered! (count {trigger_count + 1}/2)")
 
@@ -146,9 +155,9 @@ def trigger_deadman(BASE: Path, config: dict, CONFIG_FILE: Path, args_id: str):
         remove_cron_job(args_id)
         print("Deadman switch disabled permanently. All sensitive files removed.")
 
-SENDEMAIL_PATH = Path(__file__).parent / "sendemail.py"
+SENDEMAIL_PATH = Path(__file__).parent / "sendEmail.py"
 if not SENDEMAIL_PATH.exists():
-    die("sendemail.py not found in the same directory as deadman.py. Please ensure sendemail.py is present.")
+    die("sendEmail.py not found in the same directory as deadman.py. Please ensure sendEmail.py is present.")
 
 parser = argparse.ArgumentParser(
     description="Local-only dead man's switch",
@@ -234,7 +243,12 @@ if missing:
     run(["sudo", "apt", "update"])
     run(["sudo", "apt", "install", "-y"] + missing)
 
-recipient = prompt("Recipient email address: ")
+recipient = prompt("Recipient email address (required): ")
+cc_input = prompt("CC email addresses (optional, comma-separated): ")
+bcc_input = prompt("BCC email addresses (optional, comma-separated): ")
+# Convert to lists, ignoring empty strings
+cc_emails = [e.strip() for e in cc_input.split(",") if e.strip()] if cc_input else None
+bcc_emails = [e.strip() for e in bcc_input.split(",") if e.strip()] if bcc_input else None
 days = int(prompt("Days before deadman triggers: "))
 
 key_name = f"deadman-{switch_id}"
@@ -331,6 +345,8 @@ p.communicate("\n".join(lines) + "\n")
 CONFIG_FILE.write_text(json.dumps({
     "id": switch_id,
     "recipient": recipient,
+    "cc": cc_emails,
+    "bcc": bcc_emails,
     "days": days,
     "created": int(time.time()),
     "payload": str(payload_enc),
