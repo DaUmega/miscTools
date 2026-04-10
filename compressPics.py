@@ -2,274 +2,326 @@
 """
 Image Compressor Script
 -----------------------
-Recursively compresses image files in a given directory to ensure they fall within a defined size range.
-Tries to preserve original quality as much as possible. Removes originals after compression.
-
-Features:
-- Adaptive compression using binary search on quality
-- Optional image downscaling when compression alone isn't enough
-- Parallel processing for faster batch operations
-- Auto-installs missing dependencies (Pillow)
+Compresses image files in a directory to fall within a defined size range.
+Preserves original quality as much as possible.
+Always previews files and asks for confirmation before making any changes.
 
 Usage:
-    python3 compress_images.py /path/to/directory
+    python3 compressPics.py /path/to/directory [options]
+
+Options:
+    -r, --recursive         Also process subdirectories (opt-in)
+    -y, --yes               Skip confirmation prompt
+    --backup                Copy originals to .backup/ before overwriting
+    --strip-exif            Remove EXIF metadata (saves space, zero pixel loss)
+    --min-size MB           Skip files smaller than this (default: 1.0 MB)
+    --max-size MB           Target ceiling after compression (default: 1.5 MB)
+
+Examples:
+    python3 compressPics.py ~/Photos
+    python3 compressPics.py ~/Photos -r --backup
+    python3 compressPics.py ~/Photos --strip-exif --min-size 0.5
 """
 
 import os
 import io
 import sys
+import shutil
+import argparse
 import subprocess
 import importlib
 import concurrent.futures
 
-# === SETTINGS ===
-MAX_SIZE_MB = 1.5         # Target maximum file size(MB) after compression
-MIN_SIZE_MB = 1.0         # Skip images smaller than this threshold
-TARGET_RATIO = 0.25       # Try to compress images to ~25% of original size
-# SUPPORTED_FORMATS unchanged...
-SUPPORTED_FORMATS = (
-    '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff'
-)
-# =================
+# === DEFAULTS ===
+DEFAULT_MAX_SIZE_MB = 1.5
+DEFAULT_MIN_SIZE_MB = 1.0
+TARGET_RATIO        = 0.25     # aim for ~25% of original size as a starting target
+SUPPORTED_FORMATS   = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
 
 
 # === DEPENDENCY CHECK ===
-DEPENDENCIES = [
-    ("Pillow", "PIL"),
-]
-
 def ensure_dependencies():
-    """Ensure required packages are importable; check distribution metadata before installing.
-    Avoids false 'missing' reports on Windows when the distribution name differs from the import name.
-    """
-    import platform
     try:
-        import importlib.metadata as importlib_metadata  # Python 3.8+
+        importlib.import_module("PIL")
+        return
     except ImportError:
-        try:
-            import importlib_metadata  # type: ignore  # backport
-        except Exception:
-            importlib_metadata = None
-
-    for dist_name, module_name in DEPENDENCIES:
-        try:
-            importlib.import_module(module_name)
-            continue
-        except Exception:
-            # If we can inspect installed distributions, check whether the package is installed under a different name
-            has_dist = False
-            if importlib_metadata:
-                try:
-                    importlib_metadata.version(dist_name)
-                    has_dist = True
-                except Exception:
-                    has_dist = False
-
-            if has_dist:
-                # Distribution is installed but import failed (name mismatch or broken env) — assume ok and skip install
-                continue
-
-            # Not installed: avoid auto-install on Windows to prevent unexpected behavior
-            if platform.system() == "Windows":
-                print(f"⚠️ Dependency not found: {dist_name}. Skipping auto-install on Windows.")
-                continue
-
-            print(f"⚠️ Missing dependency: {dist_name}. Installing...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", dist_name])
+        pass
+    if sys.platform == "win32":
+        print("⚠️  Pillow not found. Install it with:  pip install Pillow")
+        sys.exit(1)
+    print("⚠️  Installing Pillow...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "Pillow"])
 
 ensure_dependencies()
-
-from PIL import Image, ImageOps  # imported after ensuring Pillow is available
-
-
-# === HELPER FUNCTIONS ===
-def get_size_mb(buf: bytes) -> float:
-    """Return the size of a byte buffer in megabytes."""
-    return len(buf) / (1024 * 1024)
+from PIL import Image  # noqa: E402 — imported after dependency check
 
 
-def _save_image_bytes(img: Image.Image, img_format: str, q: int = None, exif_bytes: bytes = None) -> bytes:
-    """Save image to bytes with appropriate parameters (handles JPEG mode conversions and EXIF)."""
-    temp = io.BytesIO()
-    fmt = img_format.upper()
-    save_params = {}
+# === IMAGE HELPERS ===
 
-    if fmt in ('JPEG', 'JPG'):
-        # Ensure mode is compatible with JPEG
-        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-            # Remove alpha by compositing onto white background
-            background = Image.new("RGB", img.size, (255, 255, 255))
-            background.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
-            img_to_save = background
-        else:
-            img_to_save = img.convert("RGB")
-        save_params.update({"format": "JPEG", "optimize": True})
-        if q is not None:
-            save_params["quality"] = q
-        if exif_bytes:
-            save_params["exif"] = exif_bytes
-
-    elif fmt == 'PNG':
-        img_to_save = img
-        save_params.update({"format": "PNG", "optimize": True})
-        if q is not None:
-            # Map quality-ish value to PNG compress_level (0-9)
-            save_params["compress_level"] = max(0, min(9, int((100 - q) / 10)))
-    else:
-        img_to_save = img
-        save_params.update({"format": fmt})
-
-    img_to_save.save(temp, **save_params)
-    return temp.getvalue()
+def get_size_mb(data: bytes) -> float:
+    return len(data) / (1024 * 1024)
 
 
-def compress_to_target_size(img: Image.Image, img_format: str, target_mb: float, exif_bytes: bytes = None) -> bytes:
+def _save_jpeg(img: Image.Image, quality: int, exif_bytes: bytes | None) -> bytes:
+    buf = io.BytesIO()
+    out = img
+    if img.mode in ("RGBA", "LA", "P"):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+        out = bg
+    elif img.mode != "RGB":
+        out = img.convert("RGB")
+
+    params = {"format": "JPEG", "optimize": True, "quality": quality}
+    if exif_bytes:
+        params["exif"] = exif_bytes
+    out.save(buf, **params)
+    return buf.getvalue()
+
+
+def _save_png(img: Image.Image, compress_level: int = 9) -> bytes:
+    """Lossless PNG save — no quality degradation, only zlib compression level."""
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True, compress_level=compress_level)
+    return buf.getvalue()
+
+
+def compress_image_data(
+    img: Image.Image,
+    img_format: str,
+    target_mb: float,
+    max_mb: float,
+    exif_bytes: bytes | None,
+    strip_exif: bool,
+) -> bytes:
     """
-    Compress image adaptively to reach a target file size (MB).
-
-    Strategy change:
-    - Try a wider range of JPEG/PNG quality values and remember the smallest output produced.
-    - Return the best quality-only result (keeps original pixel dimensions).
-    - Only perform limited downscaling as a last resort when the result still exceeds MAX_SIZE_MB.
+    Return compressed image bytes, trying to stay under target_mb.
+    Strategy:
+      PNG  → lossless zlib max compression; quantize only if still > max_mb.
+      JPEG → binary-search quality between 20–92; downscale only as last resort.
     """
-    # widen bounds so search can hit lower qualities when needed
-    low, high = 15, 95  # quality search bounds
-    best_bytes = None
-    best_quality = 85   # reasonable default if search fails
-    width, height = img.size
+    fmt = (img_format or "JPEG").upper()
+    kept_exif = None if strip_exif else exif_bytes
 
-    smallest_bytes = None
-    smallest_size = float('inf')
-    smallest_quality = None
+    # ── PNG: lossless first ──────────────────────────────────────────────────
+    if fmt == "PNG":
+        data = _save_png(img, compress_level=9)
+        if get_size_mb(data) <= max_mb:
+            return data
+        # Lossy fallback: convert to JPEG
+        data = _save_jpeg(img, quality=85, exif_bytes=kept_exif)
+        if get_size_mb(data) <= max_mb:
+            return data
+        fmt = "JPEG"   # fall through to JPEG binary search below
 
-    # Binary search: try to find the HIGHEST quality that still fits under target_mb
+    # ── JPEG: binary search on quality ──────────────────────────────────────
+    low, high = 20, 92
+    best_under: bytes | None = None       # highest quality that fits
+    smallest: bytes | None  = None        # absolute smallest produced
+    smallest_mb = float("inf")
+
     while low <= high:
         q = (low + high) // 2
-        data = _save_image_bytes(img, img_format, q=q, exif_bytes=exif_bytes)
-        size_mb = get_size_mb(data)
+        data = _save_jpeg(img, quality=q, exif_bytes=kept_exif)
+        mb = get_size_mb(data)
 
-        # track the smallest result even if it doesn't reach target
-        if size_mb < smallest_size:
-            smallest_size = size_mb
-            smallest_bytes = data
-            smallest_quality = q
+        if mb < smallest_mb:
+            smallest_mb = mb
+            smallest = data
 
-        if size_mb <= target_mb:
-            # Keep best (highest) quality found so far
-            best_bytes = data
-            best_quality = q
-            low = q + 1  # try higher quality
+        if mb <= target_mb:
+            best_under = data
+            low = q + 1           # try to keep higher quality
         else:
-            high = q - 1  # too large — reduce quality
+            high = q - 1
 
-    # If we found a quality-only result that fits target, return it
-    if best_bytes is not None:
-        return best_bytes
+    if best_under is not None:
+        return best_under
 
-    # Prefer the best quality-only result (preserve pixels). Only resize if the file still exceeds MAX_SIZE_MB.
-    if smallest_bytes is not None:
-        if smallest_size <= MAX_SIZE_MB:
-            return smallest_bytes
+    # Quality-only result is still under the hard ceiling — accept it
+    if smallest is not None and smallest_mb <= max_mb:
+        return smallest
 
-    # Limited downscaling fallback (only if necessary to meet absolute MAX_SIZE_MB).
-    # Do not shrink below a fraction of original dimensions.
-    MAX_DOWNSCALE_FACTOR = 0.8
-    MAX_DOWNSCALE_ITER = 5
-
-    current_img = img
-    scale = 0.95
-    iter_count = 0
-    while iter_count < MAX_DOWNSCALE_ITER:
-        new_w = max(1, int(width * scale))
-        new_h = max(1, int(height * scale))
-        if new_w < 2 or new_h < 2:
-            break
-
-        resized = current_img.resize((new_w, new_h), Image.LANCZOS)
-        data = _save_image_bytes(resized, img_format, q=smallest_quality or best_quality, exif_bytes=exif_bytes)
-        size_mb = get_size_mb(data)
-        if size_mb <= MAX_SIZE_MB or scale <= MAX_DOWNSCALE_FACTOR:
+    # ── Last resort: limited downscale (max 3 steps, never below 73% of original) ──
+    w, h = img.size
+    scale = 0.90
+    current = img
+    for _ in range(3):
+        nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+        resized = current.resize((nw, nh), Image.LANCZOS)
+        q = max(20, (low + high) // 2) if low <= high else 55
+        data = _save_jpeg(resized, quality=q, exif_bytes=kept_exif)
+        if get_size_mb(data) <= max_mb:
             return data
+        current = resized
+        scale *= 0.90
 
-        current_img = resized
-        scale *= 0.95
-        iter_count += 1
-
-    # If all else fails, return the best quality-only result (even if > MAX_SIZE_MB)
-    if smallest_bytes is not None:
-        return smallest_bytes
-
-    # Fallback: force save original at best_quality
-    return _save_image_bytes(img, img_format, q=best_quality, exif_bytes=exif_bytes)
+    return smallest or _save_jpeg(img, quality=55, exif_bytes=kept_exif)
 
 
-def compress_image(path: str):
-    """Compress a single image file if it's larger than MIN_SIZE_MB."""
+# === SINGLE FILE ===
+
+def compress_file(path: str, args) -> tuple[str, float, float | None, str]:
+    """
+    Compress one file.  Returns (path, original_mb, final_mb_or_None, status).
+    status: 'skipped' | 'compressed' | 'error:<msg>'
+    """
+    original_mb = os.path.getsize(path) / (1024 * 1024)
+
+    if original_mb < args.min_size:
+        return path, original_mb, None, "skipped"
+
+    target_mb = min(args.max_size, original_mb * TARGET_RATIO)
+
     try:
-        original_size = os.path.getsize(path) / (1024 * 1024)
-        if original_size < MIN_SIZE_MB:
-            print(f"⏭️  Skipping small file ({original_size:.2f} MB): {path}")
-            return
-
-        # compute a target size based on a fraction of the original, but never exceed MAX_SIZE_MB
-        target_mb = min(MAX_SIZE_MB, original_size * TARGET_RATIO)
-
-        print(f"🔧 Compressing ({original_size:.2f} MB) -> target {target_mb:.2f} MB: {path}")
         with Image.open(path) as img:
-            # Preserve EXIF bytes (don't physically transpose/prematurely rotate the image).
-            # This keeps the original pixel dimensions; viewers that honor EXIF orientation will still display correctly.
             try:
                 exif = img.getexif()
                 exif_bytes = exif.tobytes() if exif else None
             except Exception:
                 exif_bytes = None
 
-            # NOTE: no ImageOps.exif_transpose(img) here — we preserve pixel orientation and EXIF.
-            img_format = img.format or 'JPEG'
-            result = compress_to_target_size(img, img_format, target_mb, exif_bytes=exif_bytes)
+            img_format = img.format or "JPEG"
+            img.load()   # load fully before closing the file handle
+            result = compress_image_data(
+                img, img_format, target_mb, args.max_size,
+                exif_bytes, args.strip_exif
+            )
 
-            # Write temporary compressed file then replace original
-            temp_path = path + ".tmp"
-            with open(temp_path, "wb") as f:
-                f.write(result)
-            os.replace(temp_path, path)
+        if args.backup:
+            backup_dir = os.path.join(os.path.dirname(path), ".backup")
+            os.makedirs(backup_dir, exist_ok=True)
+            shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
 
-            final_size = os.path.getsize(path) / (1024 * 1024)
-            print(f"✅ Compressed to {final_size:.2f} MB ({path})")
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(result)
+        os.replace(tmp, path)
+
+        final_mb = os.path.getsize(path) / (1024 * 1024)
+        return path, original_mb, final_mb, "compressed"
 
     except Exception as e:
-        print(f"❌ Failed to process {path}: {e}")
+        return path, original_mb, None, f"error:{e}"
 
 
-def compress_directory(directory: str):
-    """Recursively find and compress all supported image files in a directory."""
-    all_images = []
-    for root, _, files in os.walk(directory):
-        for fname in files:
-            if fname.lower().endswith(SUPPORTED_FORMATS):
-                all_images.append(os.path.join(root, fname))
+# === SCAN ===
 
-    if not all_images:
+def collect_images(directory: str, recursive: bool) -> list[str]:
+    images = []
+    if recursive:
+        for root, dirs, files in os.walk(directory):
+            # Skip backup folders we created
+            dirs[:] = [d for d in dirs if d != ".backup"]
+            for f in files:
+                if f.lower().endswith(SUPPORTED_FORMATS):
+                    images.append(os.path.join(root, f))
+    else:
+        for f in os.listdir(directory):
+            p = os.path.join(directory, f)
+            if os.path.isfile(p) and f.lower().endswith(SUPPORTED_FORMATS):
+                images.append(p)
+    return sorted(images)
+
+
+# === MAIN ===
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Safely compress images in a directory.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("directory", help="Directory containing images")
+    parser.add_argument("-r", "--recursive", action="store_true",
+                        help="Also process subdirectories")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="Skip confirmation prompt")
+    parser.add_argument("--backup", action="store_true",
+                        help="Copy originals to .backup/ before overwriting")
+    parser.add_argument("--strip-exif", action="store_true",
+                        help="Remove EXIF metadata (saves space, no pixel loss)")
+    parser.add_argument("--min-size", type=float, default=DEFAULT_MIN_SIZE_MB,
+                        metavar="MB", help=f"Skip files smaller than this (default: {DEFAULT_MIN_SIZE_MB})")
+    parser.add_argument("--max-size", type=float, default=DEFAULT_MAX_SIZE_MB,
+                        metavar="MB", help=f"Target maximum size (default: {DEFAULT_MAX_SIZE_MB})")
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.directory):
+        print(f"❌  Not a directory: {args.directory}")
+        sys.exit(1)
+
+    images = collect_images(args.directory, args.recursive)
+
+    if not images:
         print("No supported images found.")
-        return
+        sys.exit(0)
 
-    print(f"Found {len(all_images)} images. Starting compression...\n")
+    # ── Preview table ────────────────────────────────────────────────────────
+    will_compress, will_skip = [], []
+    for p in images:
+        mb = os.path.getsize(p) / (1024 * 1024)
+        if mb < args.min_size:
+            will_skip.append((p, mb))
+        else:
+            will_compress.append((p, mb))
 
-    # Parallel compression for better performance
+    if will_skip:
+        print(f"\n⏭️  Skipping {len(will_skip)} file(s) smaller than {args.min_size} MB:")
+        for p, mb in will_skip:
+            print(f"   {mb:6.2f} MB  {os.path.relpath(p, args.directory)}")
+
+    if not will_compress:
+        print("\nNothing to compress.")
+        sys.exit(0)
+
+    print(f"\nFiles to compress ({len(will_compress)}):")
+    print(f"  {'Size':>8}   Path")
+    print(f"  {'----':>8}   ----")
+    total_mb = 0.0
+    for p, mb in will_compress:
+        print(f"  {mb:>7.2f}MB   {os.path.relpath(p, args.directory)}")
+        total_mb += mb
+    print(f"\n  Total: {total_mb:.2f} MB across {len(will_compress)} file(s)")
+    if args.backup:
+        print("  Originals will be backed up to .backup/ in each folder.")
+    if args.strip_exif:
+        print("  EXIF metadata will be stripped.")
+    if not args.recursive:
+        print("  Subdirectories are NOT included (use -r to include them).")
+
+    # ── Confirmation ─────────────────────────────────────────────────────────
+    if not args.yes:
+        try:
+            answer = input(f"\nCompress {len(will_compress)} file(s)? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted.")
+            sys.exit(0)
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            sys.exit(0)
+
+    # ── Compress ─────────────────────────────────────────────────────────────
+    print()
+    paths_only = [p for p, _ in will_compress]
+
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        list(executor.map(compress_image, all_images))
+        futures = {executor.submit(compress_file, p, args): p for p in paths_only}
+        for future in concurrent.futures.as_completed(futures):
+            path, orig_mb, final_mb, status = future.result()
+            rel = os.path.relpath(path, args.directory)
+            if status == "skipped":
+                print(f"⏭️   skipped (too small)          {rel}")
+            elif status == "compressed":
+                saved = orig_mb - final_mb
+                pct   = (saved / orig_mb) * 100 if orig_mb else 0
+                print(f"✅  {orig_mb:.2f} MB → {final_mb:.2f} MB  (-{pct:.0f}%)  {rel}")
+            else:
+                msg = status.replace("error:", "", 1)
+                print(f"❌  failed: {msg:<30} {rel}")
+
+    print("\n🎉  Done!")
 
 
-# === MAIN ENTRY POINT ===
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} /path/to/directory")
-        sys.exit(1)
-
-    target_dir = sys.argv[1]
-    if not os.path.isdir(target_dir):
-        print(f"❌ Invalid directory: {target_dir}")
-        sys.exit(1)
-
-    compress_directory(target_dir)
-    print("\n🎉 All done!")
+    main()
