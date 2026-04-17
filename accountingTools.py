@@ -79,6 +79,32 @@ def section(title: str) -> None:
 # Config (freelancer profile)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _collect_taxes() -> list:
+    """Interactively collect one or more tax entries for config.json."""
+    print("  Taxes — enter each tax in the order they should appear on the invoice.")
+    print("  In BC: add PST (7%) first, then GST (5%). Both apply to the pre-tax base.")
+    print("  Press Enter with no label to finish.")
+    taxes = []
+    while True:
+        idx = len(taxes) + 1
+        label = ask(f"  Tax {idx} label (e.g. PST, GST, VAT — blank to finish)")
+        if not label:
+            break
+        rate = ask_float(f"  {label} rate, e.g. 0.07 for 7%", 0.0)
+        taxes.append({"label": label, "rate": rate})
+    return taxes
+
+
+def _resolve_taxes(cfg: dict) -> list:
+    """Return the taxes list, upgrading old single-tax configs transparently."""
+    if "taxes" in cfg:
+        return cfg["taxes"]
+    # Backward-compat: config.json written by an older version of this script
+    rate  = cfg.get("tax_rate", 0)
+    label = cfg.get("tax_label", "Tax")
+    return [{"label": label, "rate": rate}] if rate else []
+
+
 def setup_config() -> dict:
     section("Your profile (saved to config.json)")
     cfg = {
@@ -88,9 +114,8 @@ def setup_config() -> dict:
         "address":        ask("Address (optional)"),
         "website":        ask("Website (optional)"),
         "logo":           ask("Path to logo PNG/JPG (optional)"),
-        "currency_symbol":ask("Currency symbol", "$"),
-        "tax_rate":       ask_float("Tax rate, e.g. 0.20 for 20% (0 to disable)", 0.0),
-        "tax_label":      ask("Tax label (e.g. VAT, GST)", "Tax"),
+        "currency_symbol": ask("Currency symbol", "$"),
+        "taxes":           _collect_taxes(),
         "invoice_terms":  ask("Invoice terms",  "Payment due within 30 days."),
         "receipt_terms":  ask("Receipt terms",  "Payment received. Thank you for your business."),
         "estimate_terms": ask("Estimate terms", "This estimate is valid for 30 days. Scope changes may affect the final price."),
@@ -201,14 +226,46 @@ def load_template(path: Path) -> dict:
 
 def pick_template(doc_type: str) -> dict:
     section("Document template")
-    path_str = ask("Path to template JSON (Enter to generate one)")
-    if not path_str:
-        path = generate_template(doc_type)
-        sys.exit(0)
-    path = Path(path_str)
-    if not path.exists():
-        sys.exit(f"File not found: {path}")
-    return load_template(path)
+
+    # Auto-discover *.json in cwd, excluding config and saved client files
+    found = sorted(Path(".").glob("*.json"))
+    found = [p for p in found if p != CONFIG_FILE
+             and not str(p).startswith(str(CLIENTS_DIR) + "/")]
+
+    if found:
+        print("  JSON files found in current directory:")
+        for i, p in enumerate(found, 1):
+            print(f"    {i}. {p.name}")
+        print("    g. Generate a new template")
+        print("    m. Enter path manually")
+        choice = ask("Pick a number, 'g', or 'm'").lower()
+
+        if choice == "g":
+            generate_template(doc_type)
+            sys.exit(0)
+        elif choice == "m":
+            path_str = ask("Path to template JSON")
+            if not path_str:
+                sys.exit("No path entered.")
+            path = Path(path_str)
+            if not path.exists():
+                sys.exit(f"File not found: {path}")
+            return load_template(path)
+        else:
+            try:
+                return load_template(found[int(choice) - 1])
+            except (ValueError, IndexError):
+                sys.exit("Invalid choice.")
+    else:
+        # No JSON files found — offer to generate or type a path
+        path_str = ask("Path to template JSON (Enter to generate one)")
+        if not path_str:
+            generate_template(doc_type)
+            sys.exit(0)
+        path = Path(path_str)
+        if not path.exists():
+            sys.exit(f"File not found: {path}")
+        return load_template(path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -231,9 +288,14 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
     discount_amt   = subtotal * (discount_pct / 100) if discount_pct else 0
     discounted     = subtotal - discount_amt
 
-    tax_rate = cfg.get("tax_rate", 0)
-    tax_amt  = discounted * tax_rate if tax_rate else 0
-    total    = discounted + tax_amt
+    # Each tax is calculated independently on the discounted subtotal (not compounded).
+    # BC example: PST 7% and GST 5% both apply to the same base — they do not stack.
+    # Per CRA: "If PST is charged, calculate GST on the price without the PST."
+    taxes      = _resolve_taxes(cfg)
+    tax_lines  = [{"label": t["label"], "rate": t["rate"],
+                   "amt": discounted * t["rate"]} for t in taxes if t.get("rate")]
+    total_tax  = sum(t["amt"] for t in tax_lines)
+    total      = discounted + total_tax
 
     safe_num    = tmpl["number"].replace("/", "-")
     safe_client = client["name"].replace(" ", "_")
@@ -340,7 +402,7 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
     story += [itbl, Spacer(1, 4*mm)]
 
     # Totals
-    # Display order: Subtotal → Discount → Discounted subtotal → Tax → Total
+    # Display order: Subtotal → Discount → Discounted subtotal → each Tax → Total
     totals = [["", Paragraph("Subtotal", sN), Paragraph(f"{sym}{subtotal:,.2f}", sN)]]
 
     if discount_amt:
@@ -348,9 +410,10 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
         totals.append(["", Paragraph(lbl, sN), Paragraph(f"- {sym}{discount_amt:,.2f}", sN)])
         totals.append(["", Paragraph("Discounted subtotal", sN), Paragraph(f"{sym}{discounted:,.2f}", sN)])
 
-    if tax_amt:
-        totals.append(["", Paragraph(f"{cfg.get('tax_label','Tax')} ({int(tax_rate*100)}%)", sN),
-                            Paragraph(f"{sym}{tax_amt:,.2f}", sN)])
+    for tl in tax_lines:
+        pct_str = f"{tl['rate']*100:g}%"
+        totals.append(["", Paragraph(f"{tl['label']} ({pct_str})", sN),
+                            Paragraph(f"{sym}{tl['amt']:,.2f}", sN)])
 
     totals.append(["", Paragraph("TOTAL", sT), Paragraph(f"{sym}{total:,.2f}", sT)])
 
