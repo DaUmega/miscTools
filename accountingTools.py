@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-freelance.py — Generate invoices, receipts, and estimates as PDFs.
+accountingTools.py — Generate invoices, receipts, and estimates as PDFs.
 
 Usage:
-    python freelance.py                          # guided flow
-    python freelance.py invoice template.json   # use an existing template
-    python freelance.py receipt template.json
-    python freelance.py estimate template.json
+    python accountingTools.py                          # guided flow
+    python accountingTools.py invoice template.json   # use an existing template
+    python accountingTools.py receipt template.json
+    python accountingTools.py estimate template.json
 
 Requires:  pip install reportlab
 """
@@ -183,7 +183,7 @@ def generate_template(doc_type: str) -> Path:
     section(f"Generate {doc_type} template")
     path = Path(ask("Save template to", f"{doc_type}_template.json"))
     save_json(path, TEMPLATE_SCHEMAS[doc_type])
-    print(f"  Edit {path} then re-run:  python freelance.py {doc_type} {path}")
+    print(f"  Edit {path} then re-run:  python accountingTools.py {doc_type} {path}")
     return path
 
 
@@ -223,9 +223,17 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
     sym      = cfg.get("currency_symbol", "$")
     items    = tmpl["items"]
     subtotal = sum(i["qty"] * i["rate"] for i in items)
+
+    # Discount is applied to subtotal BEFORE tax so that GST/VAT is
+    # calculated on the already-reduced amount.
+    discount_pct   = float(tmpl.get("discount_pct", 0))
+    discount_label = tmpl.get("discount_label", "Discount").strip() or "Discount"
+    discount_amt   = subtotal * (discount_pct / 100) if discount_pct else 0
+    discounted     = subtotal - discount_amt
+
     tax_rate = cfg.get("tax_rate", 0)
-    tax_amt  = subtotal * tax_rate if tax_rate else 0
-    total    = subtotal + tax_amt
+    tax_amt  = discounted * tax_rate if tax_rate else 0
+    total    = discounted + tax_amt
 
     safe_num    = tmpl["number"].replace("/", "-")
     safe_client = client["name"].replace(" ", "_")
@@ -303,7 +311,6 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
 
     # Line items
     rows = [[Paragraph(h, sL) for h in ("ITEM","QTY","RATE","AMOUNT")]]
-    sD = _style("D", fontSize=7, textColor=GREY, leading=11)
     for it in items:
         amt = it["qty"] * it["rate"]
         qty = str(int(it["qty"])) if it["qty"] == int(it["qty"]) else str(it["qty"])
@@ -333,26 +340,21 @@ def build_pdf(doc_type: str, tmpl: dict, cfg: dict, client: dict) -> str:
     story += [itbl, Spacer(1, 4*mm)]
 
     # Totals
-    discount_pct   = float(tmpl.get("discount_pct", 0))
-    discount_label = tmpl.get("discount_label", "Discount").strip() or "Discount"
-    discount_amt   = total * (discount_pct / 100) if discount_pct else 0
-    amount_due     = total - discount_amt
-
-    sG = _style("G", fontSize=7, textColor=GREY, leading=10)  # grey sub-label
-
+    # Display order: Subtotal → Discount → Discounted subtotal → Tax → Total
     totals = [["", Paragraph("Subtotal", sN), Paragraph(f"{sym}{subtotal:,.2f}", sN)]]
+
+    if discount_amt:
+        lbl = f"{discount_label}<br/><font size=7 color=#6B7280>({discount_pct:g}% off)</font>"
+        totals.append(["", Paragraph(lbl, sN), Paragraph(f"- {sym}{discount_amt:,.2f}", sN)])
+        totals.append(["", Paragraph("Discounted subtotal", sN), Paragraph(f"{sym}{discounted:,.2f}", sN)])
+
     if tax_amt:
         totals.append(["", Paragraph(f"{cfg.get('tax_label','Tax')} ({int(tax_rate*100)}%)", sN),
                             Paragraph(f"{sym}{tax_amt:,.2f}", sN)])
-    if discount_amt:
-        lbl = f"{discount_label}<br/><font size=7 color=#6B7280>({discount_pct:g}% off)</font>"
-        totals.append(["", Paragraph("Total", sN), Paragraph(f"{sym}{total:,.2f}", sN)])
-        totals.append(["", Paragraph(lbl, sN),     Paragraph(f"- {sym}{discount_amt:,.2f}", sN)])
-        totals.append(["", Paragraph("AMOUNT DUE", sT), Paragraph(f"{sym}{amount_due:,.2f}", sT)])
-    else:
-        totals.append(["", Paragraph("TOTAL", sT), Paragraph(f"{sym}{total:,.2f}", sT)])
+
+    totals.append(["", Paragraph("TOTAL", sT), Paragraph(f"{sym}{total:,.2f}", sT)])
+
     ttbl = Table(totals, colWidths=[W*.52, W*.30, W*.18])
-    # Bold line above the last row only
     last = len(totals) - 1
     ttbl.setStyle(TableStyle([
         ("ALIGN",         (1,0),(-1,-1), "RIGHT"),
@@ -385,13 +387,13 @@ DOC_TYPES = ("invoice", "receipt", "estimate")
 
 
 def main():
-    # ── Parse optional CLI args: freelance.py [doc_type] [template.json] ──
+    # ── Parse optional CLI args: accountingTools.py [doc_type] [template.json] ──
     args      = sys.argv[1:]
     doc_type  = args[0].lower() if args and args[0].lower() in DOC_TYPES else None
     tmpl_arg  = args[1] if len(args) > 1 else None
 
     print("─" * 48)
-    print("  freelance.py — invoice / receipt / estimate")
+    print("  accountingTools.py — invoice / receipt / estimate")
     print("─" * 48)
 
     # 1. Config
