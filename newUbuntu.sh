@@ -63,7 +63,10 @@ if confirm "remove Firefox"; then
 fi
 
 if confirm "install Steam"; then
-    sudo snap install steam
+    sudo dpkg --add-architecture i386
+    curl -L -o /tmp/steam.deb https://cdn.fastly.steamstatic.com/client/installer/steam.deb
+    sudo apt install -y /tmp/steam.deb
+    rm -f /tmp/steam.deb
 fi
 
 if confirm "install ffmpeg"; then
