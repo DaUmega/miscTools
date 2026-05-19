@@ -136,9 +136,10 @@ if confirm "install qBitTorrent"; then
     sudo apt install -y qbittorrent
 fi
 
-echo "[*] Cleaning up..."
-sudo apt autoremove -y
-sudo apt autoclean -y
+if confirm "run autoremove and autoclean"; then
+    sudo apt autoremove -y
+    sudo apt autoclean -y
+fi
 
 echo "[i] Use Startup Application app to add steam:steam, discord:discord, mega:megasync"
 echo "[✔] Setup complete. You may need to reboot for all changes to take effect."
