@@ -16,6 +16,7 @@ Options:
     --min-size MB           Skip files smaller than this (default: 5.0 MB)
     --ratio RATIO           Only keep compressed file if smaller than this
                             fraction of the original (default: 0.5 = 50%)
+    --crf N                 libx265 CRF quality (default: 28; lower = better)
 
 Examples:
     python3 compressVids.py ~/Videos
@@ -28,15 +29,16 @@ import sys
 import re
 import json
 import shutil
-import signal
 import subprocess
 import threading
 import time
 import argparse
+import tempfile
 
 # === DEFAULTS ===
 DEFAULT_MIN_SIZE_MB        = 5.0
 DEFAULT_MIN_COMPRESS_RATIO = 0.5   # keep new file only if < 50% of original
+DEFAULT_CRF                = 28    # libx265 quality (18–28 is sane; 28 = default)
 SAMPLE_SECONDS             = 20    # seconds of encoding used to estimate final size
 SUPPORTED_FORMATS          = ('.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv')
 
@@ -62,6 +64,18 @@ def get_video_info(path: str) -> tuple[float | None, float]:
         return duration, size_mb
     except Exception:
         return None, os.path.getsize(path) / (1024 * 1024)
+
+
+def has_audio(path: str) -> bool:
+    """Return True if the file contains at least one audio stream."""
+    try:
+        cmd = [FFPROBE, "-v", "error", "-select_streams", "a",
+               "-show_entries", "stream=index", "-of", "json", path]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        info = json.loads(result.stdout)
+        return bool(info.get("streams"))
+    except Exception:
+        return False
 
 
 def fmt_duration(seconds: float) -> str:
@@ -96,30 +110,88 @@ def collect_videos(directory: str, recursive: bool) -> list[str]:
     return sorted(videos)
 
 
+def verify_output(path: str) -> bool:
+    """
+    Quick sanity-check: ask ffprobe to read the whole container and confirm
+    it can find both duration and at least one valid stream. This catches
+    truncated or corrupted encodes before we do anything destructive.
+    """
+    try:
+        cmd = [FFPROBE, "-v", "error",
+               "-show_entries", "format=duration:stream=codec_type",
+               "-of", "json", path]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, timeout=30)
+        if result.returncode != 0:
+            return False
+        info = json.loads(result.stdout)
+        if not info.get("format", {}).get("duration"):
+            return False
+        streams = info.get("streams", [])
+        return any(s.get("codec_type") == "video" for s in streams)
+    except Exception:
+        return False
+
+
 # === COMPRESSION ===
 
-def compress_video(path: str, args) -> None:
-    duration, size_mb = get_video_info(path)
+def build_ffmpeg_cmd(input_path: str, output_path: str, crf: int, audio: bool) -> list[str]:
+    """
+    Build the ffmpeg command.
 
-    base_dir  = os.path.dirname(path)
-    base_name = os.path.splitext(os.path.basename(path))[0]
-    temp_path  = os.path.join(base_dir, base_name + ".tmp.mkv")
-    final_path = os.path.join(base_dir, base_name + ".mkv")
+    Audio strategy
+    --------------
+    We re-encode audio to AAC instead of stream-copying. This is the primary
+    fix for A/V sync glitches: copying an audio stream that has a non-zero
+    start PTS (very common in previously-transcoded files) into a new
+    container with video starting at 0 causes the perceived drift / looping.
+    Re-encoding resets PTSes and lets ffmpeg handle the realignment.
 
-    accept_threshold_mb = size_mb * args.ratio
+    Extra flags
+    -----------
+    -map_metadata 0   Preserve title, date, etc. from the source.
+    -movflags +faststart  Even for MKV this is a no-op, but it costs nothing
+                      and keeps the command safe if someone changes the output
+                      extension to .mp4 in the future.
+    -avoid_negative_ts make_zero  Shift timestamps so the first frame is at 0;
+                      prevents wrapped-around timestamps from older containers
+                      causing sync drift in the output.
+    -fflags +genpts   Regenerate PTS for any stream that is missing them.
+    """
+    cmd = [
+        FFMPEG, "-y",
+        "-fflags", "+genpts",
+        "-i", input_path,
+        "-map", "0",              # keep all streams (video, audio, subtitles)
+        "-map_metadata", "0",
+        "-c:v", "libx265",
+        "-crf", str(crf),
+        "-preset", "medium",
+        "-vtag", "hvc1",
+        "-avoid_negative_ts", "make_zero",
+    ]
+    if audio:
+        # Re-encode audio; 128k is transparent for AAC-LC on most content.
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-ar", "48000"]
+    else:
+        cmd += ["-an"]
+    # Subtitle streams: copy as-is (text subs are container-level, no timing issue).
+    cmd += ["-c:s", "copy"]
+    cmd += ["-movflags", "+faststart"]
+    cmd.append(output_path)
+    return cmd
 
-    print(f"\n{'─'*60}")
-    print(f"🔧  {os.path.relpath(path, args.directory)}")
-    print(f"    Size     : {size_mb:.2f} MB")
-    if duration:
-        print(f"    Duration : {fmt_duration(duration)}")
-    print(f"    Keep if  : < {accept_threshold_mb:.2f} MB  ({args.ratio*100:.0f}% of original)")
 
-    cmd = [FFMPEG, "-y", "-i", path, "-c:v", "libx265", "-vtag", "hvc1", "-c:a", "copy", temp_path]
-    print(f"    Command  : {' '.join(cmd)}\n")
-
+def run_ffmpeg(cmd: list[str], duration: float | None,
+               temp_path: str, size_mb: float,
+               accept_threshold_mb: float) -> tuple[int, bool]:
+    """
+    Run ffmpeg, stream stderr, do the early-abort sample check.
+    Returns (returncode, aborted_early).
+    Guarantees the process is dead and temp_path is cleaned up on early abort.
+    """
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                             text=True, bufsize=1)
+                            text=True, bufsize=1)
 
     last_time_str: dict[str, str | None] = {"val": None}
     time_re = re.compile(r"time=(\d+:\d+:\d+\.\d+)")
@@ -152,11 +224,11 @@ def compress_video(path: str, args) -> None:
             sampled = True
             try:
                 if os.path.exists(temp_path) and duration:
-                    bytes_written  = os.path.getsize(temp_path)
-                    parsed         = last_time_str.get("val")
-                    enc_seconds    = hms_to_seconds(parsed) if parsed else elapsed
-                    kbps           = (bytes_written * 8) / enc_seconds / 1000.0 if enc_seconds > 0 else 0.0
-                    est_mb         = (kbps * 1000.0 / 8.0) * duration / (1024 * 1024)
+                    bytes_written = os.path.getsize(temp_path)
+                    parsed        = last_time_str.get("val")
+                    enc_seconds   = hms_to_seconds(parsed) if parsed else elapsed
+                    kbps          = (bytes_written * 8) / enc_seconds / 1000.0 if enc_seconds > 0 else 0.0
+                    est_mb        = (kbps * 1000.0 / 8.0) * duration / (1024 * 1024)
 
                     print(f"\n🔎  Sample ({int(enc_seconds)}s encoded): "
                           f"{bytes_written/(1024*1024):.2f} MB written, ~{kbps:.0f} kbit/s")
@@ -165,29 +237,69 @@ def compress_video(path: str, args) -> None:
 
                     if est_mb >= accept_threshold_mb:
                         print("⚠️   Estimate won't meet threshold. Aborting early.")
+                        # SIGTERM is cleaner than SIGINT: ffmpeg handles it as a
+                        # graceful stop, flushing headers before exit, which means
+                        # the temp file won't be partially written in a way that
+                        # looks valid but is corrupt.
+                        proc.terminate()
                         try:
-                            proc.send_signal(signal.SIGINT)
-                            proc.wait(timeout=5)
+                            proc.wait(timeout=10)
                         except subprocess.TimeoutExpired:
                             proc.kill()
                             proc.wait()
-                        except Exception:
-                            proc.kill()
+                        reader.join(timeout=2)
                         if os.path.exists(temp_path):
                             os.remove(temp_path)
-                        reader.join(timeout=1)
-                        return
+                        return proc.returncode or 0, True
                     else:
                         print("✅  Estimate looks good. Continuing to completion.")
             except Exception as e:
-                print(f"⚠️   Sample failed ({e}). Continuing.")
+                print(f"⚠️   Sample check failed ({e}). Continuing.")
 
         time.sleep(0.5)
 
-    rc = proc.poll()
-    if rc is None:
-        rc = proc.wait()
-    reader.join(timeout=1)
+    rc = proc.wait()
+    reader.join(timeout=2)
+    return rc, False
+
+
+def compress_video(path: str, args) -> None:
+    duration, size_mb = get_video_info(path)
+    audio             = has_audio(path)
+
+    base_dir  = os.path.dirname(path)
+    base_name = os.path.splitext(os.path.basename(path))[0]
+    final_path = os.path.join(base_dir, base_name + ".mkv")
+
+    accept_threshold_mb = size_mb * args.ratio
+
+    print(f"\n{'─'*60}")
+    print(f"🔧  {os.path.relpath(path, args.directory)}")
+    print(f"    Size     : {size_mb:.2f} MB")
+    if duration:
+        print(f"    Duration : {fmt_duration(duration)}")
+    print(f"    Audio    : {'yes (re-encoding to AAC)' if audio else 'none'}")
+    print(f"    Keep if  : < {accept_threshold_mb:.2f} MB  ({args.ratio*100:.0f}% of original)")
+
+    # Write temp file into the same directory so os.replace() is atomic
+    # (same filesystem). Use a proper tempfile so the name is unique even
+    # if two instances run concurrently.
+    fd, temp_path = tempfile.mkstemp(suffix=".tmp.mkv", dir=base_dir)
+    os.close(fd)
+
+    cmd = build_ffmpeg_cmd(path, temp_path, args.crf, audio)
+    print(f"    Command  : {' '.join(cmd)}\n")
+
+    try:
+        rc, aborted = run_ffmpeg(cmd, duration, temp_path, size_mb, accept_threshold_mb)
+    except Exception as e:
+        print(f"\n❌  Unexpected error: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return
+
+    if aborted:
+        return  # temp already cleaned up inside run_ffmpeg
 
     if rc != 0:
         print(f"\n❌  ffmpeg exited with code {rc}.")
@@ -199,15 +311,24 @@ def compress_video(path: str, args) -> None:
         print(f"\n❌  Output not found: {temp_path}")
         return
 
+    # Structural sanity check before touching the original
+    print("🔍  Verifying output integrity…")
+    if not verify_output(temp_path):
+        print("❌  Output failed integrity check (truncated or no video stream). Original kept.")
+        os.remove(temp_path)
+        return
+
     final_mb = os.path.getsize(temp_path) / (1024 * 1024)
     ratio    = final_mb / size_mb if size_mb > 0 else 1.0
-    print(f"\n✅  Encoded: {final_mb:.2f} MB  ({ratio*100:.0f}% of original)")
+    print(f"✅  Encoded: {final_mb:.2f} MB  ({ratio*100:.0f}% of original)")
 
     if final_mb < accept_threshold_mb:
         if args.backup:
             backup_dir = os.path.join(base_dir, ".backup")
             os.makedirs(backup_dir, exist_ok=True)
             shutil.copy2(path, os.path.join(backup_dir, os.path.basename(path)))
+        # Atomic replace: move temp into final position first, then remove
+        # the original if it had a different extension.
         os.replace(temp_path, final_path)
         if os.path.abspath(path) != os.path.abspath(final_path):
             try:
@@ -241,6 +362,9 @@ def main():
     parser.add_argument("--ratio", type=float, default=DEFAULT_MIN_COMPRESS_RATIO,
                         metavar="RATIO",
                         help=f"Keep compressed file only if smaller than RATIO × original (default: {DEFAULT_MIN_COMPRESS_RATIO})")
+    parser.add_argument("--crf", type=int, default=DEFAULT_CRF,
+                        metavar="N",
+                        help=f"libx265 CRF quality value (default: {DEFAULT_CRF}; lower = better quality / larger file)")
     args = parser.parse_args()
 
     if not os.path.isdir(args.directory):
@@ -284,6 +408,7 @@ def main():
         print(f"  {mb:>7.2f}MB   {dur_str:>10}   {os.path.relpath(p, args.directory)}")
     print(f"\n  Total : {total_mb:.2f} MB  /  {fmt_duration(total_dur)}")
     print(f"  Keep new file only if < {args.ratio*100:.0f}% of original size")
+    print(f"  CRF: {args.crf}  |  Audio: re-encoded to AAC 128k")
     if args.backup:
         print("  Originals will be backed up to .backup/ before replacing.")
     if not args.recursive:
