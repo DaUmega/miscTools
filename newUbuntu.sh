@@ -123,13 +123,6 @@ if confirm "install Eddie"; then
     sudo apt install -y eddie-ui
 fi
 
-if confirm "install TeamViewer"; then
-    curl -fsSL -o /tmp/teamviewer_amd64.deb https://download.teamviewer.com/download/linux/teamviewer_amd64.deb
-    sudo dpkg -i /tmp/teamviewer_amd64.deb || true
-    sudo apt -f install -y
-    rm -f /tmp/teamviewer_amd64.deb
-fi
-
 if confirm "install qBitTorrent"; then
     sudo add-apt-repository -y ppa:qbittorrent-team/qbittorrent-stable
     sudo apt update
