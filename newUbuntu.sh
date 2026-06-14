@@ -95,6 +95,17 @@ if confirm "install VLC"; then
     sudo apt install vlc -y
 fi
 
+if confirm "install AppImageLauncher"; then
+    echo "[i] Your architecture: $(uname -m)"
+    echo "[i] Download page: https://github.com/TheAssassin/AppImageLauncher/releases"
+    read -p "[?] Paste the .deb download URL for your arch: " _ail_url
+    _ail_filename=$(basename "$_ail_url")
+    wget -O "/tmp/$_ail_filename" "$_ail_url"
+    sudo apt install -y "/tmp/$_ail_filename"
+    rm -f "/tmp/$_ail_filename"
+    echo "[+] AppImageLauncher installed successfully."
+fi
+
 if confirm "modify GRUB timeout to 3 seconds"; then
     sudo sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=3/' /etc/default/grub
     sudo sed -i 's/^#\?\s*GRUB_TIMEOUT_STYLE=.*/GRUB_TIMEOUT_STYLE=menu/' /etc/default/grub
