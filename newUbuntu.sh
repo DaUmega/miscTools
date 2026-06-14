@@ -98,7 +98,7 @@ if confirm "install VLC"; then
 fi
 
 if confirm "install AppImageLauncher"; then
-    echo "[i] Your architecture: $(uname -m)"
+    echo "[i] Your architecture: $(dpkg --print-architecture)"
     echo "[i] Download page: https://github.com/TheAssassin/AppImageLauncher/releases"
     read -p "[?] Paste the .deb download URL for your arch: " _ail_url
     _ail_filename=$(basename "$_ail_url")
