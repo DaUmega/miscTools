@@ -45,6 +45,8 @@ fi
 
 if confirm "detect and install/update drivers like NVIDIA"; then
     sudo ubuntu-drivers autoinstall
+    echo "[*] Marking NVIDIA packages as manually installed to prevent autoremove..."
+    sudo apt-mark manual $(dpkg -l | grep -i nvidia | awk '{print $2}') 2>/dev/null || true
 fi
 
 if confirm "install NVIDIA 32-bit support"; then
