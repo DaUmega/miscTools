@@ -43,12 +43,6 @@ if confirm "adjust power and idle settings"; then
     gsettings set org.gnome.desktop.peripherals.mouse accel-profile 'flat'
 fi
 
-if confirm "detect and install/update drivers like NVIDIA"; then
-    sudo ubuntu-drivers autoinstall
-    echo "[*] Marking NVIDIA packages as manually installed to prevent autoremove..."
-    sudo apt-mark manual $(dpkg -l | grep -i nvidia | awk '{print $2}') 2>/dev/null || true
-fi
-
 if confirm "install NVIDIA 32-bit support"; then
     sudo dpkg --add-architecture i386
     sudo apt update
