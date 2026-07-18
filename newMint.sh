@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# wget https://raw.githubusercontent.com/DaUmega/miscTools/main/newUbuntu.sh; chmod +x newUbuntu.sh; ./newUbuntu.sh
+# wget https://raw.githubusercontent.com/DaUmega/miscTools/main/newMint.sh; chmod +x newMint.sh; ./newMint.sh
 
 set -e
 
@@ -20,27 +20,24 @@ if confirm "install common tools (curl, git, etc.)"; then
 fi
 
 if confirm "set dark mode"; then
-    gsettings set org.gnome.desktop.interface gtk-theme 'Yaru-dark'
-    gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' || true
+    gsettings set org.cinnamon.desktop.interface gtk-theme 'Mint-Y-Dark'
+    gsettings set org.cinnamon.theme name 'Mint-Y-Dark'
+    gsettings set org.cinnamon.desktop.interface color-scheme 'prefer-dark' || true
 fi
 
 if confirm "enable Night Light"; then
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled true
-fi
-
-if confirm "move dock to bottom"; then
-    gsettings set org.gnome.shell.extensions.dash-to-dock dock-position 'BOTTOM'
+    gsettings set org.cinnamon.settings-daemon.plugins.color night-light-enabled true
 fi
 
 if confirm "adjust power and idle settings"; then
-    gsettings set org.gnome.settings-daemon.plugins.power idle-dim false
-    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
-    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
-    gsettings set org.gnome.desktop.screensaver lock-enabled false
-    gsettings set org.gnome.desktop.session idle-delay 0
-    gsettings set org.gnome.settings-daemon.plugins.power lid-close-ac-action 'nothing'
-    gsettings set org.gnome.settings-daemon.plugins.power lid-close-battery-action 'nothing'
-    gsettings set org.gnome.desktop.peripherals.mouse accel-profile 'flat'
+    gsettings set org.cinnamon.settings-daemon.plugins.power idle-dim-ac false
+    gsettings set org.cinnamon.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+    gsettings set org.cinnamon.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
+    gsettings set org.cinnamon.desktop.screensaver lock-enabled false
+    gsettings set org.cinnamon.desktop.session idle-delay 0
+    gsettings set org.cinnamon.settings-daemon.plugins.power lid-close-ac-action 'nothing'
+    gsettings set org.cinnamon.settings-daemon.plugins.power lid-close-battery-action 'nothing'
+    gsettings set org.cinnamon.desktop.peripherals.mouse accel-profile 'flat' || true
 fi
 
 if confirm "install NVIDIA 32-bit support"; then
@@ -55,7 +52,7 @@ fi
 
 if confirm "remove Firefox"; then
     sudo apt remove --purge -y firefox
-    sudo snap remove firefox || true
+    sudo snap remove firefox 2>/dev/null || true
 fi
 
 if confirm "install Steam"; then
@@ -66,11 +63,13 @@ if confirm "install Steam"; then
 fi
 
 if confirm "install ffmpeg"; then
-    sudo snap install ffmpeg
+    sudo apt install -y ffmpeg
 fi
 
 if confirm "install Discord"; then
-    sudo snap install discord
+    curl -L -o /tmp/discord.deb "https://discord.com/api/download?platform=linux&format=deb"
+    sudo apt install -y /tmp/discord.deb
+    rm -f /tmp/discord.deb
 fi
 
 if confirm "install MEGAsync"; then
@@ -84,7 +83,13 @@ if confirm "install MEGAsync"; then
 fi
 
 if confirm "install VS Code"; then
-    sudo snap install code --classic
+    sudo apt install -y wget gpg
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/packages.microsoft.gpg
+    sudo install -D -o root -g root -m 644 /tmp/packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+    echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
+    rm -f /tmp/packages.microsoft.gpg
+    sudo apt update
+    sudo apt install -y code
 fi
 
 if confirm "install VLC"; then
@@ -125,7 +130,7 @@ fi
 
 if confirm "install Eddie"; then
     sudo curl -fsSL https://eddie.website/repository/keys/eddie_maintainer_gpg.key | sudo tee /usr/share/keyrings/eddie.website-keyring.asc > /dev/null
-    sudo echo "deb [signed-by=/usr/share/keyrings/eddie.website-keyring.asc] http://eddie.website/repository/apt stable main" | sudo tee /etc/apt/sources.list.d/eddie.website.list
+    echo "deb [signed-by=/usr/share/keyrings/eddie.website-keyring.asc] http://eddie.website/repository/apt stable main" | sudo tee /etc/apt/sources.list.d/eddie.website.list > /dev/null
     sudo apt update
     sudo apt install -y eddie-ui
 fi
@@ -141,5 +146,6 @@ if confirm "run autoremove and autoclean"; then
     sudo apt autoclean -y
 fi
 
-echo "[i] Use Startup Application app to add steam:steam, discord:discord, mega:megasync"
+echo "[i] To move the panel to the bottom: right-click the panel -> 'Panel Edit Mode', then drag it, or use System Settings > Panel."
+echo "[i] Use Startup Applications app to add steam:steam, discord:discord, mega:megasync"
 echo "[✔] Setup complete. You may need to reboot for all changes to take effect."
