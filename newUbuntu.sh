@@ -87,6 +87,13 @@ if confirm "install VS Code"; then
     sudo snap install code --classic
 fi
 
+if confirm "create and activate a new python virtual environment"; then
+    sudo apt install -y python3-venv
+    python3 -m venv "$HOME/.venv"
+    source "$HOME/.venv/bin/activate"
+    pip install --upgrade pip
+fi
+
 if confirm "install VLC"; then
     sudo apt install vlc -y
 fi
