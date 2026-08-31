@@ -103,6 +103,10 @@ if confirm "install VLC"; then
     sudo apt install vlc -y
 fi
 
+if confirm "install Xournal (pdf editor)"; then
+    sudo apt install xournalpp -y
+fi
+
 if confirm "install AppImageLauncher"; then
     echo "[i] Your architecture: $(dpkg --print-architecture)"
     echo "[i] Download page: https://github.com/TheAssassin/AppImageLauncher/releases"
