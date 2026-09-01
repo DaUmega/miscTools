@@ -107,6 +107,14 @@ if confirm "install Xournal (pdf editor)"; then
     sudo apt install xournalpp -y
 fi
 
+if confirm "install Signal"; then
+    curl https://updates.signal.org/desktop/apt/keys.asc | gpg --dearmor > signal-desktop-keyring.gpg
+    cat signal-desktop-keyring.gpg | sudo tee /usr/share/keyrings/signal-desktop-keyring.gpg > /dev/null
+    curl -o signal-desktop.sources https://updates.signal.org/static/desktop/apt/signal-desktop.sources
+    cat signal-desktop.sources | sudo tee /etc/apt/sources.list.d/signal-desktop.sources > /dev/null
+    sudo apt update && sudo apt install signal-desktop -y
+fi
+
 if confirm "install AppImageLauncher"; then
     echo "[i] Your architecture: $(dpkg --print-architecture)"
     echo "[i] Download page: https://github.com/TheAssassin/AppImageLauncher/releases"
