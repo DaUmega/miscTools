@@ -165,6 +165,26 @@ if confirm "run autoremove and autoclean"; then
     sudo apt autoclean -y
 fi
 
+echo "[*] Checking CUDA versions..."
+
+_driver=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9.]*\).*/\1/p' | head -1)
+_toolkit=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9.]*\).*/\1/p' | tail -1)
+_nvrtc=$(ldconfig -p 2>/dev/null | grep -m1 'libnvrtc.so' | sed 's/.*libnvrtc.so.\([0-9.]*\).*/\1/')
+
+echo "[i] Driver CUDA:  ${_driver:-not found}"
+echo "[i] Toolkit:      ${_toolkit:-not found}"
+echo "[i] NVRTC:        ${_nvrtc:-not found}"
+
+if [[ -n "$_driver" && -n "$_toolkit" ]] &&
+   (( ${_toolkit%%.*} < ${_driver%%.*} )); then
+    echo "[!] Potential CUDA/NVRTC mismatch."
+    echo "[i] Suggested checks:"
+    echo "    apt-cache policy cuda-toolkit"
+    echo "    apt-cache search '^cuda-toolkit-[0-9]'"
+    echo "    ldconfig -p | grep nvrtc"
+    echo "    sudo apt install cuda-toolkit-13-2"
+fi
+
 echo "[i] To move the panel to the bottom: right-click the panel -> 'Panel Edit Mode', then drag it, or use System Settings > Panel."
 echo "[i] Use Startup Applications app to add steam:steam, discord:discord, mega:megasync"
 echo "[✔] Setup complete. You may need to reboot for all changes to take effect."
