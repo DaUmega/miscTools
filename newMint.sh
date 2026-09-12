@@ -115,6 +115,12 @@ if confirm "install Signal"; then
     sudo apt update && sudo apt install signal-desktop -y
 fi
 
+if confirm "install Bitwarden Desktop"; then
+    curl -L -o /tmp/bitwarden.deb "https://bitwarden.com/download/?app=desktop&platform=linux&variant=deb"
+    sudo apt install -y /tmp/bitwarden.deb
+    rm -f /tmp/bitwarden.deb
+fi
+
 if confirm "install AppImageLauncher"; then
     echo "[i] Your architecture: $(dpkg --print-architecture)"
     echo "[i] Download page: https://github.com/TheAssassin/AppImageLauncher/releases"
