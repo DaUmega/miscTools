@@ -119,6 +119,14 @@ if confirm "install Bitwarden Desktop"; then
     curl -L -o /tmp/bitwarden.deb "https://bitwarden.com/download/?app=desktop&platform=linux&variant=deb"
     sudo apt install -y /tmp/bitwarden.deb
     rm -f /tmp/bitwarden.deb
+
+    _bw_sock_line="export SSH_AUTH_SOCK=${HOME}/.bitwarden-ssh-agent.sock"
+    case "$SHELL" in
+        */zsh) _bw_rc="$HOME/.zshrc" ;;
+        *) _bw_rc="$HOME/.bashrc" ;;
+    esac
+    grep -qxF "$_bw_sock_line" "$_bw_rc" 2>/dev/null || echo "$_bw_sock_line" >> "$_bw_rc"
+    echo "[i] Added SSH_AUTH_SOCK export to $_bw_rc"
 fi
 
 if confirm "install AppImageLauncher"; then
