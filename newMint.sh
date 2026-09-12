@@ -119,7 +119,13 @@ if confirm "install Bitwarden Desktop"; then
     curl -L -o /tmp/bitwarden.deb "https://bitwarden.com/download/?app=desktop&platform=linux&variant=deb"
     sudo apt install -y /tmp/bitwarden.deb
     rm -f /tmp/bitwarden.deb
+fi
 
+echo "[i] Bitwarden SSH agent setup requires a few manual steps first:"
+echo "    1. Open Bitwarden Desktop"
+echo "    2. Log in to your account"
+echo "    3. Go to Settings and enable the SSH agent"
+if confirm "confirm you've done the above and add SSH_AUTH_SOCK to your shell config"; then
     _bw_sock_line="export SSH_AUTH_SOCK=${HOME}/.bitwarden-ssh-agent.sock"
     case "$SHELL" in
         */zsh) _bw_rc="$HOME/.zshrc" ;;
