@@ -50,9 +50,7 @@ sudo pacman -Syu --noconfirm
 # Official-repo packages: "prompt|packages"
 for item in \
     "install common tools|curl wget git fuse2 net-tools unzip pacman-contrib" \
-    "install NVIDIA 32-bit support|lib32-nvidia-utils" \
-    "install Steam|steam" \
-    "install Wine|wine winetricks wine-mono wine-gecko" \
+    "install gaming support (CachyOS gaming meta + apps incl. Proton-CachyOS, plus Steam)|cachyos-gaming-meta cachyos-gaming-applications steam" \
     "install ffmpeg|ffmpeg" \
     "install Discord|discord" \
     "install Code - OSS (open-source VS Code)|code" \
@@ -63,6 +61,15 @@ for item in \
     "install qBittorrent|qbittorrent"; do
     if confirm "${item%%|*}"; then pac ${item#*|}; fi
 done
+
+if command -v nvidia-smi &>/dev/null && ! pacman -Qq lib32-nvidia-utils &>/dev/null; then
+    echo "[!] NVIDIA GPU found but lib32-nvidia-utils is missing (needed for 32-bit games). Install the one matching your driver (see: chwd --list-installed)."
+fi
+
+if confirm "raise the NVIDIA shader cache limit to 12GB (CachyOS wiki tip, avoids recompiling shaders)"; then
+    mkdir -p ~/.config/environment.d
+    echo "__GL_SHADER_DISK_CACHE_SIZE=12000000000" > ~/.config/environment.d/gaming.conf
+fi
 
 if confirm "create a python virtual environment (~/.venv)"; then
     pac python python-pip
