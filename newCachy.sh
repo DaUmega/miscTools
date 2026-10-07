@@ -136,6 +136,14 @@ if confirm "continue to the AUR section"; then
     if confirm "install AppImageLauncher (AUR)"; then
         aur appimagelauncher "github.com" "Official repo: github.com/TheAssassin/AppImageLauncher." || true
     fi
+    if confirm "install Canon imageCLASS MF3010 printer driver (CUPS + AUR)"; then
+        pac cups
+        sudo systemctl enable --now cups
+        if aur cnrdrvcups-lb-bin "c-wss.com|canon-europe.com" "Canon UFR II driver. Downloads from Canon's CDN (c-wss.com)."; then
+            sudo systemctl restart cups
+            echo "[i] Plug in the printer, then add it in System Settings > Printers and pick the Canon MF3010 driver."
+        fi
+    fi
 fi
 
 if confirm "remove orphaned packages and clean the package cache"; then
