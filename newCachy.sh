@@ -51,6 +51,7 @@ sudo pacman -Syu --noconfirm
 for item in \
     "install common tools|curl wget git fuse2 net-tools unzip pacman-contrib" \
     "install gaming support (CachyOS gaming meta + apps incl. Proton-CachyOS, plus Steam)|cachyos-gaming-meta cachyos-gaming-applications steam" \
+    "install QEMU/KVM virtualization (QEMU + virt-manager + TPM support)|qemu-full virt-manager swtpm" \
     "install ffmpeg|ffmpeg" \
     "install Discord|discord" \
     "install Code - OSS (open-source VS Code)|code" \
@@ -69,6 +70,19 @@ fi
 if confirm "raise the NVIDIA shader cache limit to 12GB (CachyOS wiki tip, avoids recompiling shaders)"; then
     mkdir -p ~/.config/environment.d
     echo "__GL_SHADER_DISK_CACHE_SIZE=12000000000" > ~/.config/environment.d/gaming.conf
+fi
+
+if confirm "enable libvirt for QEMU/KVM virtual machines"; then
+    sudo usermod -aG libvirt "$USER"
+    sudo systemctl enable --now libvirtd.socket
+    echo "[i] Added $USER to the libvirt group."
+    echo "[i] Log out and back in before using virt-manager."
+    echo "[i] Create/manage VMs with: virt-manager"
+fi
+
+if confirm "enable the default libvirt NAT network"; then
+    sudo virsh net-autostart default
+    sudo virsh net-start default 2>/dev/null || true
 fi
 
 if confirm "create a python virtual environment (~/.venv)"; then
