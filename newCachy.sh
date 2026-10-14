@@ -59,7 +59,8 @@ for item in \
     "install Xournal++|xournalpp" \
     "install Signal|signal-desktop" \
     "install Bitwarden|bitwarden" \
-    "install qBittorrent|qbittorrent"; do
+    "install qBittorrent|qbittorrent" \
+    "install Nicotine+|nicotine+"; do
     if confirm "${item%%|*}"; then pac ${item#*|}; fi
 done
 
