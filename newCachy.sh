@@ -17,7 +17,6 @@ rc_add() { # rc_add "<bash/zsh line>" "<fish line>"
 }
 
 jf() { grep -oP "\"$1\":\K(\"[^\"]*\"|[^,}]*)" <<<"$2" | head -1 | tr -d '"\\'; }
-
 aur() { # aur <pkg> <expected-domain-regex> <note>
     local p=$1 dom=$2 j pb m v
     echo -e "\n[!] '$p' is from the AUR: NOT official, an unreviewed build script that runs as you."
@@ -44,6 +43,12 @@ aur() { # aur <pkg> <expected-domain-regex> <note>
     paru -S --needed "$p"
 }
 
+detect_gpu() { # nvidia | amd | intel | none — no lspci needed
+    if command -v nvidia-smi &>/dev/null && nvidia-smi -L &>/dev/null; then echo nvidia
+    elif [[ -d /sys/module/amdgpu ]]; then echo amd
+    elif [[ -d /sys/module/i915 || -d /sys/module/xe ]]; then echo intel
+    else echo none; fi
+}
 echo "[*] Updating system..."
 sudo pacman -Syu --noconfirm
 
@@ -60,9 +65,46 @@ for item in \
     "install Signal|signal-desktop" \
     "install Bitwarden|bitwarden" \
     "install qBittorrent|qbittorrent" \
+    "install tor,torsocks|tor torsocks" \
     "install Nicotine+|nicotine+"; do
     if confirm "${item%%|*}"; then pac ${item#*|}; fi
 done
+
+if confirm "install Docker (engine + compose)"; then
+    pac docker docker-compose
+    sudo systemctl enable --now docker.socket
+    sudo usermod -aG docker "$USER"
+    echo "[i] Added $USER to the docker group; log out and back in to run docker without sudo."
+fi
+
+# GPU detection + per-vendor container suggestions (only if docker is around).
+if command -v docker &>/dev/null; then
+    case "$(detect_gpu)" in
+        nvidia)
+            if docker info 2>/dev/null | grep -q nvidia; then
+                echo "[i] Docker already sees the NVIDIA runtime (docker --gpus works)."
+            elif confirm "install nvidia-container-toolkit (lets Docker containers use your NVIDIA GPU)"; then
+                if aur nvidia-container-toolkit "github.com|nvidia.com" "Upstream: github.com/NVIDIA/libnvidia-container. Enables docker --gpus."; then
+                    sudo nvidia-ctk runtime configure --runtime=docker
+                    sudo systemctl restart docker
+                    docker info 2>/dev/null | grep -qi nvidia \
+                        && echo "[✔] Docker NVIDIA runtime ready." \
+                        || echo "[!] Still not visible; reboot, then check: docker info | grep -i nvidia"
+                fi
+            fi
+            ;;
+        amd)
+            echo "[i] AMD GPU + Docker: containers need /dev/dri and the render/video groups."
+            if confirm "add yourself to the render and video groups (GPU access for containers)"; then
+                sudo usermod -aG render,video "$USER"
+                echo "[i] Log out and back in for group changes to apply."
+            fi
+            ;;
+        intel)
+            echo "[i] Intel GPU + Docker: pass --device /dev/dri to containers that need the GPU."
+            ;;
+    esac
+fi
 
 if command -v nvidia-smi &>/dev/null && ! pacman -Qq lib32-nvidia-utils &>/dev/null; then
     echo "[!] NVIDIA GPU found but lib32-nvidia-utils is missing (needed for 32-bit games). Install the one matching your driver (see: chwd --list-installed)."
@@ -72,7 +114,6 @@ if confirm "raise the NVIDIA shader cache limit to 12GB (CachyOS wiki tip, avoid
     mkdir -p ~/.config/environment.d
     echo "__GL_SHADER_DISK_CACHE_SIZE=12000000000" > ~/.config/environment.d/gaming.conf
 fi
-
 if confirm "enable libvirt for QEMU/KVM virtual machines"; then
     sudo usermod -aG libvirt "$USER"
     sudo systemctl enable --now libvirtd.socket
@@ -139,11 +180,10 @@ if confirm "ignore lid switch in systemd (takes effect after reboot)"; then
     printf '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n' \
         | sudo tee /etc/systemd/logind.conf.d/lid.conf >/dev/null
 fi
-
 echo -e "\n[!] Next: UNOFFICIAL AUR packages (MEGAsync, Eddie, AppImageLauncher). Each shows a warning and info to verify first."
 if confirm "continue to the AUR section"; then
     if confirm "install MEGAsync (AUR)"; then
-        aur megasync-bin "mega.nz" "Official site: mega.nz; sources should only point there." || true
+        aur megasync-bin "mega."nz "Official site: mega."nz"; sources should only point there." || true
     fi
     if confirm "install Eddie (AUR)"; then
         aur eddie-ui "eddie.website|airvpn.org" "Official site: eddie.website." || true
@@ -151,13 +191,13 @@ if confirm "continue to the AUR section"; then
     if confirm "install AppImageLauncher (AUR)"; then
         aur appimagelauncher "github.com" "Official repo: github.com/TheAssassin/AppImageLauncher." || true
     fi
-    if confirm "install Canon imageCLASS MF3010 printer driver (CUPS + AUR)"; then
-        pac cups
-        sudo systemctl enable --now cups
-        if aur cnrdrvcups-lb-bin "c-wss.com|canon-europe.com" "Canon UFR II driver. Downloads from Canon's CDN (c-wss.com)."; then
-            sudo systemctl restart cups
-            echo "[i] Plug in the printer, then add it in System Settings > Printers and pick the Canon MF3010 driver."
-        fi
+fi
+if confirm "install Canon imageCLASS MF3010 printer driver (CUPS + AUR)"; then
+    pac cups
+    sudo systemctl enable --now cups
+    if aur cnrdrvcups-lb-bin "c-wss.com|canon-europe.com" "Canon UFR II driver. Downloads from Canon's CDN (c-wss.com)."; then
+        sudo systemctl restart cups
+        echo "[i] Plug in the printer, then add it in System Settings > Printers and pick the Canon MF3010 driver."
     fi
 fi
 
