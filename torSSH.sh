@@ -1,192 +1,152 @@
 #!/usr/bin/env bash
+# tor-ssh: minimal Tor hidden-service SSH toolkit (rewritten 2026-10-14).
+#
+# Direct run, no TTY (everything comes in as args; needs passwordless sudo or root):
+#   curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/torSSH.sh | bash -s -- install
+#
+#   install                  server: install tor + openssh, harden sshd
+#   serve                    server: create hidden service, print .onion
+#   unserve                  server: remove hidden service
+#   onion                    server: show .onion address
+#   keygen [--force]         client: new ed25519 keypair, print pubkey
+#   auth "ssh-ed25519 AAAA"  server: add pubkey to authorized_keys
+#   connect user@onion       client: ssh to .onion over tor
+#   tunnel user@onion [port] client: SOCKS5 proxy over tor (default 1080)
 set -euo pipefail
-IFS=$'\n\t'
 
-PROGNAME="$(basename "$0")"
-TOR_HS_DIR="/var/lib/tor/ssh_hidden"
-TORRC="/etc/tor/torrc"
-SSHD_CONFIG="/etc/ssh/sshd_config"
-SSH_PORT=22
-DEFAULT_SOCKS_PORT=1080
+TOR_HS_DIR=/var/lib/tor/ssh_hidden
+TORRC=/etc/tor/torrc
+SSHD=/etc/ssh/sshd_config
+TOR_SOCKS=${TOR_SOCKS:-127.0.0.1:9050}   # e.g. 127.0.0.1:9150 for Tor Browser
+BEGIN="# BEGIN tor-ssh"
+END="# END tor-ssh"
+
+die() { echo "error: $*" >&2; exit 1; }
 
 install_pkgs() {
-  pkgs=("$@")
-  if command -v apt >/dev/null 2>&1; then
-    sudo apt update
-    sudo apt install -y "${pkgs[@]}"
-  elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y "${pkgs[@]}"
-  elif command -v pacman >/dev/null 2>&1; then
-    sudo pacman -Sy --noconfirm "${pkgs[@]}"
-  else
-    echo "Unsupported distro. Install manually: ${pkgs[*]}"
-    exit 1
-  fi
+  if command -v apt-get >/dev/null; then
+    sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@"
+  elif command -v dnf >/dev/null; then sudo dnf install -y -q "$@"
+  elif command -v pacman >/dev/null; then sudo pacman -Sy --noconfirm "$@"
+  else die "unsupported distro; install manually: $*"; fi
 }
 
-pause() { read -rp $'\nPress Enter to continue...'; }
-
-show_menu() {
-cat <<EOF
-
-Tor + SSH Multi-Tool
--------------------
-1) Install Tor + OpenSSH (secure defaults)
-2) Create Tor Hidden SSH service
-3) Show Tor onion hostname
-4) Remove Tor hidden SSH service
-5) Generate SSH keypair (client)
-6) Add public key on server (duplicate-safe)
-7) Connect to .onion via Tor
-8) Create full SOCKS tunnel for all traffic
-9) Quit
-
-EOF
+need_nc() { # client-side: ensure an nc that can do SOCKS5 exists
+  command -v nc >/dev/null && return 0
+  if command -v pacman >/dev/null; then install_pkgs openbsd-netcat
+  elif command -v dnf >/dev/null; then install_pkgs nmap-ncat
+  else install_pkgs netcat-openbsd; fi
 }
 
-install_tor_and_ssh() {
-  install_pkgs tor openssh-server torsocks netcat-openbsd
+proxy_cmd() { # ProxyCommand resolving .onion through tor's SOCKS
+  if nc -h 2>&1 | grep -q '\-X'; then echo "nc -X 5 -x $TOR_SOCKS %h %p"
+  else echo "ncat --proxy-type socks5 --proxy $TOR_SOCKS %h %p"; fi
+}
+
+sshd_set() { # sshd_set Key value — replace (commented or active) or append
+  sudo sed -i -E "s/^#?${1}[[:space:]].*/${1} ${2}/" "$SSHD"
+  sudo grep -qiE "^${1}[[:space:]]" "$SSHD" || echo "${1} ${2}" | sudo tee -a "$SSHD" >/dev/null
+}
+
+tor_user() {
+  local u
+  for u in debian-tor tor toranon _tor; do
+    id "$u" >/dev/null 2>&1 && { echo "$u"; return 0; }
+  done
+  return 1
+}
+
+cmd_install() {
+  [ -f "$SSHD" ] || die "no $SSHD"
+  install_pkgs tor openssh-server
   sudo systemctl enable --now tor
-  if sudo systemctl list-unit-files | grep -qE 'sshd.service|ssh.service'; then
-    sudo systemctl enable --now ssh || sudo systemctl enable --now sshd || true
-  else
-    sudo systemctl enable --now ssh || sudo systemctl enable --now sshd || true
-  fi
-  if [ -f "$SSHD_CONFIG" ]; then
-    sudo cp -n "$SSHD_CONFIG" "$SSHD_CONFIG.bak.$(date +%s)" || true
-    sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD_CONFIG"
-    if ! sudo grep -q "^PasswordAuthentication" "$SSHD_CONFIG"; then
-      echo "PasswordAuthentication no" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-    fi
-    sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' "$SSHD_CONFIG"
-    if ! sudo grep -q "^PermitRootLogin" "$SSHD_CONFIG"; then
-      echo "PermitRootLogin no" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-    fi
-    sudo sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD_CONFIG"
-    if ! sudo grep -q "^ChallengeResponseAuthentication" "$SSHD_CONFIG"; then
-      echo "ChallengeResponseAuthentication no" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-    fi
-    sudo sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' "$SSHD_CONFIG"
-    if ! sudo grep -q "^PubkeyAuthentication" "$SSHD_CONFIG"; then
-      echo "PubkeyAuthentication yes" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-    fi
-    CURUSER=$(logname 2>/dev/null || echo "$SUDO_USER" || whoami)
-    if [ -n "$CURUSER" ]; then
-      if sudo grep -q "^AllowUsers" "$SSHD_CONFIG"; then
-        if ! sudo grep -q "^AllowUsers.*\b$CURUSER\b" "$SSHD_CONFIG"; then
-          sudo sed -i "s/^AllowUsers.*/& $CURUSER/" "$SSHD_CONFIG" || echo "AllowUsers $CURUSER" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-        fi
-      else
-        echo "AllowUsers $CURUSER" | sudo tee -a "$SSHD_CONFIG" >/dev/null
-      fi
-    fi
-    sudo systemctl restart ssh || sudo systemctl restart sshd || true
-  fi
-  echo "Tor and SSH installed and hardened. Sometimes you need to run this twice before step 2."
+  sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd
+  # never kill password auth before a key exists — that's how lockouts happen
+  local home; home=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+  [ -s "$home/.ssh/authorized_keys" ] || die "no authorized_keys for ${SUDO_USER:-$USER}; run keygen + auth first"
+  sudo cp -n "$SSHD" "$SSHD.bak.$(date +%s)"
+  sshd_set PasswordAuthentication no
+  sshd_set KbdInteractiveAuthentication no
+  sshd_set PermitRootLogin no
+  sshd_set PubkeyAuthentication yes
+  sudo sshd -t
+  sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd
+  echo "installed and hardened"
 }
 
-create_hidden_ssh() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Run this option on the server; you may be prompted for sudo."
-  fi
+cmd_serve() {
   sudo mkdir -p "$TOR_HS_DIR"
-  sudo chown -R debian-tor:debian-tor "$TOR_HS_DIR" 2>/dev/null || true
-  if ! sudo grep -qF "HiddenServiceDir $TOR_HS_DIR" "$TORRC"; then
-    echo -e "\nHiddenServiceDir $TOR_HS_DIR\nHiddenServicePort $SSH_PORT 127.0.0.1:$SSH_PORT\n" | sudo tee -a "$TORRC" >/dev/null
+  local u; u=$(tor_user || true)
+  [ -n "$u" ] && sudo chown "$u:$u" "$TOR_HS_DIR"
+  sudo chmod 700 "$TOR_HS_DIR"
+  if ! sudo grep -qF "$BEGIN" "$TORRC"; then
+    printf '\n%s\nHiddenServiceDir %s\nHiddenServicePort 22 127.0.0.1:22\n%s\n' \
+      "$BEGIN" "$TOR_HS_DIR" "$END" | sudo tee -a "$TORRC" >/dev/null
   fi
   sudo systemctl restart tor
-  sleep 2
-  sudo chmod 700 "$TOR_HS_DIR"
-  if sudo test -f "$TOR_HS_DIR/hostname"; then
-    echo "Hidden service address:"
-    sudo cat "$TOR_HS_DIR/hostname"
-  else
-    echo "Hidden service creation failed; check 'sudo journalctl -u tor' for details."
-  fi
-}
-
-show_onion() {
-  sudo cat "$TOR_HS_DIR/hostname" 2>/dev/null || echo "No hidden service found."
-}
-
-remove_hidden_ssh() {
-  read -rp "Remove hidden service and config? (y/N) " yn
-  case "$yn" in
-    [Yy]*)
-      sudo sed -i '/HiddenServiceDir \/var\/lib\/tor\/ssh_hidden/,+1d' "$TORRC" || true
-      sudo rm -rf "$TOR_HS_DIR" || true
-      sudo systemctl restart tor || true
-      echo "Removed."
-      ;;
-  esac
-}
-
-generate_ssh_keypair() {
-  if [ -f "$HOME/.ssh/id_ed25519" ]; then
-    read -rp "Key exists. Overwrite? (y/N) " yn
-    case "$yn" in
-      [Yy]*) ;;
-      *) return ;;
-    esac
-  fi
-  ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N ""
-  cat "$HOME/.ssh/id_ed25519.pub"
-}
-
-add_public_key_server() {
-  read -rp "Paste public key: " PUBKEY
-  mkdir -p "$HOME/.ssh"
-  touch "$HOME/.ssh/authorized_keys"
-  chmod 700 "$HOME/.ssh"
-  chmod 600 "$HOME/.ssh/authorized_keys"
-  if grep -qxF "$PUBKEY" "$HOME/.ssh/authorized_keys"; then
-    echo "Key already exists."
-  else
-    echo "$PUBKEY" >> "$HOME/.ssh/authorized_keys"
-    echo "Key added."
-  fi
-}
-
-connect_onion() {
-  read -rp "Onion address: " onion
-  read -rp "Username: " user
-  if ! command -v torsocks >/dev/null 2>&1; then
-    install_pkgs torsocks
-  fi
-  torsocks ssh "$user@$onion"
-}
-
-create_socks_tunnel() {
-  read -rp "Target (.onion): " target
-  read -rp "Username: " user
-  read -rp "Local SOCKS port (default 1080): " lport
-  lport=${lport:-$DEFAULT_SOCKS_PORT}
-  if ! command -v torsocks >/dev/null 2>&1; then
-    install_pkgs torsocks
-  fi
-  echo "SOCKS5 proxy on localhost:$lport"
-  echo "Configure system or browser to use it."
-  echo "Ctrl-C to stop."
-  ssh -o ProxyCommand="torsocks nc %h %p" -D "$lport" -N "$user@$target"
-}
-
-main_loop() {
-  while true; do
-    show_menu
-    read -rp "Choice: " choice
-    case "$choice" in
-      1) install_tor_and_ssh; pause ;;
-      2) create_hidden_ssh; pause ;;
-      3) show_onion; pause ;;
-      4) remove_hidden_ssh; pause ;;
-      5) generate_ssh_keypair; pause ;;
-      6) add_public_key_server; pause ;;
-      7) connect_onion; pause ;;
-      8) create_socks_tunnel; pause ;;
-      9) exit 0 ;;
-      *) echo "Invalid choice." ;;
-    esac
+  local i; for i in {1..10}; do
+    sudo test -f "$TOR_HS_DIR/hostname" && break
+    sleep 1
   done
+  sudo cat "$TOR_HS_DIR/hostname" 2>/dev/null || die "no hostname yet; see 'sudo journalctl -u tor'"
 }
 
-main_loop
+cmd_unserve() {
+  sudo sed -i "/$BEGIN/,/$END/d" "$TORRC"
+  sudo rm -rf "$TOR_HS_DIR"
+  sudo systemctl restart tor
+  echo "hidden service removed"
+}
+
+cmd_onion() { sudo cat "$TOR_HS_DIR/hostname"; }
+
+cmd_keygen() { # keygen [--force]
+  if [ -e ~/.ssh/id_ed25519 ] && [ "${1:-}" != "--force" ]; then
+    die "key exists; pass --force to overwrite"
+  fi
+  [ "${1:-}" = "--force" ] && rm -f ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub
+  install -m 700 -d ~/.ssh
+  ssh-keygen -q -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+  cat ~/.ssh/id_ed25519.pub
+}
+
+cmd_auth() {
+  local key=${1:?usage: tor-ssh auth '"ssh-ed25519 AAAA…"'}
+  install -m 700 -d ~/.ssh
+  touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+  grep -qxF "$key" ~/.ssh/authorized_keys || echo "$key" >> ~/.ssh/authorized_keys
+  echo "key added"
+}
+
+cmd_connect() { # connect user@onion [extra ssh args…]
+  need_nc
+  ssh -o "ProxyCommand=$(proxy_cmd)" "$@"
+}
+
+cmd_tunnel() { # tunnel user@onion [port]
+  local target=${1:?usage: tor-ssh tunnel user@onion [port]} port=${2:-1080}
+  need_nc
+  echo "SOCKS5 on 127.0.0.1:$port — Ctrl-C to stop"
+  exec ssh -o "ProxyCommand=$(proxy_cmd)" -D "$port" -N "$target"
+}
+
+usage() {
+  cat <<EOF
+usage: tor-ssh <command>
+  install                  server: install tor + openssh, harden sshd
+  serve                    server: create hidden service, print .onion
+  unserve                  server: remove hidden service
+  onion                    server: show .onion address
+  keygen [--force]         client: new ed25519 keypair, print pubkey
+  auth "ssh-ed25519 AAAA"  server: add pubkey to authorized_keys
+  connect user@onion       client: ssh to .onion over tor
+  tunnel user@onion [port] client: SOCKS5 proxy over tor (default 1080)
+env: TOR_SOCKS (default 127.0.0.1:9050)
+EOF
+  exit 1
+}
+
+case "${1:-}" in
+  install|serve|unserve|onion|keygen|auth|connect|tunnel) "cmd_$1" "${@:2}" ;;
+  *) usage ;;
+esac
