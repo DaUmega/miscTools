@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tor-ssh: minimal Tor hidden-service SSH toolkit (rewritten 2026-10-14).
+# tor-ssh: minimal Tor hidden-service SSH toolkit.
 #
 # Direct run, no TTY (everything comes in as args; needs passwordless sudo or root):
 #   curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/torSSH.sh | bash -s -- install
