@@ -4,7 +4,7 @@
 # Direct run, no TTY (everything comes in as args; needs passwordless sudo or root):
 #   curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/torSSH.sh | bash -s -- install
 #
-#   install                  server: install tor + openssh, harden sshd
+#   install [key]            server: install tor + openssh, harden sshd
 #   serve                    server: create hidden service, print .onion
 #   unserve                  server: remove hidden service
 #   onion                    server: show .onion address
@@ -22,6 +22,11 @@ BEGIN="# BEGIN tor-ssh"
 END="# END tor-ssh"
 
 die() { echo "error: $*" >&2; exit 1; }
+
+ssh_pkg() { # openssh server package name differs per distro
+  if command -v pacman >/dev/null; then echo openssh
+  else echo openssh-server; fi
+}
 
 install_pkgs() {
   if command -v apt-get >/dev/null; then
@@ -57,13 +62,19 @@ tor_user() {
 }
 
 cmd_install() {
+  install_pkgs tor "$(ssh_pkg)"
   [ -f "$SSHD" ] || die "no $SSHD"
-  install_pkgs tor openssh-server
   sudo systemctl enable --now tor
   sudo systemctl enable --now ssh 2>/dev/null || sudo systemctl enable --now sshd
-  # never kill password auth before a key exists — that's how lockouts happen
+  # never kill password auth before a key exists — that's how lockouts happen.
+  # keys may live in files or in your agent (Bitwarden); explicit arg wins.
   local home; home=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
-  [ -s "$home/.ssh/authorized_keys" ] || die "no authorized_keys for ${SUDO_USER:-$USER}; run keygen + auth first"
+  if [ ! -s "$home/.ssh/authorized_keys" ]; then
+    local key=${1:-}
+    [ -n "$key" ] || key=$(ssh-add -L 2>/dev/null | grep -E '^ssh-(ed25519|rsa|ecdsa|dss) ' | head -1)
+    [ -n "$key" ] || die "no key found: pass one as arg, unlock it in Bitwarden, or run keygen + auth first"
+    cmd_auth "$key"
+  fi
   sudo cp -n "$SSHD" "$SSHD.bak.$(date +%s)"
   sshd_set PasswordAuthentication no
   sshd_set KbdInteractiveAuthentication no
@@ -133,7 +144,7 @@ cmd_tunnel() { # tunnel user@onion [port]
 usage() {
   cat <<EOF
 usage: tor-ssh <command>
-  install                  server: install tor + openssh, harden sshd
+  install [key]            server: install tor + openssh, harden sshd
   serve                    server: create hidden service, print .onion
   unserve                  server: remove hidden service
   onion                    server: show .onion address
