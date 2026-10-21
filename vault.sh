@@ -21,6 +21,11 @@
 #                       (default --keep-last 100; any restic forget flags pass through)
 #   purge --yes         delete the vault + timer here and on every reachable node
 #
+# Examples:
+#   vault backup ~/work ~/notes           back up two directories at once
+#   vault restore /tmp/r                  full restore of the latest snapshot
+#   vault restore /tmp/r --include ~/work restore just one directory
+#
 # The password is NEVER stored anywhere: restic prompts for it at your TTY
 # whenever an operation needs it. Nodes sync encrypted blobs hourly without it.
 #
@@ -76,7 +81,12 @@ cmd_join() { # join user@onion
   else echo "joined; no TTY to verify the password, sync-only for now"; fi
 }
 
-cmd_backup() { need restic; need_tty; restic backup "$@"; }
+cmd_backup() {
+  need restic; need_tty
+  local excl=()
+  [ -f "$VH/exclude" ] && excl=(--exclude-file="$VH/exclude")
+  restic backup "${excl[@]}" "$@"
+}
 
 cmd_sync() {
   need torsocks
@@ -96,6 +106,8 @@ cmd_sync() {
 
 cmd_autosync() {
   local dir=$HOME/.config/systemd/user self; self=$(readlink -f "$0")
+  grep -q "cmd_autosync" "$self" 2>/dev/null \
+    || die "cannot locate vault.sh (are you piping from curl? save it to a file and run ./vault.sh autosync)"
   mkdir -p "$dir"
   cat > "$dir/vault-sync.service" <<EOF
 [Unit]
@@ -168,8 +180,12 @@ cmd_purge() { # purge --yes: disable timer and delete the vault here and on ever
 }
 
 cmd_snapshots() { need restic; need_tty; restic snapshots; }
-cmd_restore() { need restic; need_tty; restic restore latest --target "${1:?usage: vault restore <dir>}"; }
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+cmd_restore() { # restore <dir> [--include path ...]: restore latest snapshot (or just paths)
+  need restic; need_tty
+  local target=${1:?usage: vault restore <dir> [--include path ...]}; shift
+  restic restore latest --target "$target" "$@"
+}
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 case "${1:-}" in
   install|init|join|backup|sync|autosync|snapshots|restore|prune|purge) "cmd_$1" "${@:2}" ;;
