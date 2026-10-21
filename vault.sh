@@ -13,6 +13,8 @@
 #   init                first machine only: create vault + node list
 #   join user@onion     new machine: copy the vault from a seed node (never re-init)
 #   backup <paths...>   snapshot paths into the local vault (prompts for password)
+#                       stored by final directory name only: ~/a/b/work restores
+#                       as <target>/work/...; all paths must share one parent
 #   sync                union-copy vault with every node in nodes.txt (no password needed)
 #   autosync            install hourly systemd user timer (sync only)
 #   snapshots           list snapshots (prompts for password)
@@ -22,9 +24,9 @@
 #   purge --yes         delete the vault + timer here and on every reachable node
 #
 # Examples:
-#   vault backup ~/work ~/notes           back up two directories at once
-#   vault restore /tmp/r                  full restore of the latest snapshot
-#   vault restore /tmp/r --include ~/work restore just one directory
+#   vault backup ~/test/work              restores as /tmp/r/work/...
+#   vault backup ~/work ~/notes           restores as /tmp/r/work/... and /tmp/r/notes/...
+#   vault restore /tmp/r --include work   restore just one directory
 #
 # The password is NEVER stored anywhere: restic prompts for it at your TTY
 # whenever an operation needs it. Nodes sync encrypted blobs hourly without it.
@@ -81,11 +83,24 @@ cmd_join() { # join user@onion
   else echo "joined; no TTY to verify the password, sync-only for now"; fi
 }
 
-cmd_backup() {
-  need restic; need_tty
-  local excl=()
+cmd_backup() { # backup <paths...>: stored by final directory name only
+  need restic; need_tty # ~/a/b/work restores as <target>/work/...
+  local excl=() abs=() args=() p cwd=$PWD d0 # all paths must share one parent dir
   [ -f "$VH/exclude" ] && excl=(--exclude-file="$VH/exclude")
-  restic backup "${excl[@]}" "$@"
+  for p in "$@"; do
+    case $p in /*) ;; *) p=$cwd/$p;; esac # absolute, lexically (covers ., ./x, sub)
+    p=${p//\/.\//\/}                    # collapse /./
+    [ ${#p} -gt 1 ] && p=${p%/}            # no trailing slash
+    p=${p%/.}                              # no trailing /.
+    abs+=("$p")
+  done
+  d0=$(dirname "${abs[0]}")
+  for p in "${abs[@]:1}"; do
+    [ "$(dirname "$p")" = "$d0" ] \
+      || die "paths span multiple parents; back up each parent group separately"
+  done
+  for p in "${abs[@]}"; do args+=("$(basename "$p")"); done
+  ( cd "$d0" && restic backup "${excl[@]}" "${args[@]}" )
 }
 
 cmd_sync() {
@@ -185,7 +200,7 @@ cmd_restore() { # restore <dir> [--include path ...]: restore latest snapshot (o
   local target=${1:?usage: vault restore <dir> [--include path ...]}; shift
   restic restore latest --target "$target" "$@"
 }
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 case "${1:-}" in
   install|init|join|backup|sync|autosync|snapshots|restore|prune|purge) "cmd_$1" "${@:2}" ;;
