@@ -26,7 +26,7 @@
 # Machines never use your Bitwarden key: the timer runs as the machine with its
 # own passphrase-less key (torSSH.sh keygen), authorized per node via your key.
 #
-# env: VAULT_HOME
+# env: VAULT_HOME (local vault dir only; peers are always at ~/vault)
 set -euo pipefail
 
 VH=${VAULT_HOME:-$HOME/vault}
@@ -36,7 +36,7 @@ die() { echo "error: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "need $1 installed"; }
 need_tty() { [ -t 0 ] || die "no TTY: run this interactively so restic can prompt for the password"; }
 me() { echo "$(id -un)@$(sudo cat /var/lib/tor/ssh_hidden/hostname 2>/dev/null || hostname)"; }
-rsh() { echo "torsocks ssh -o BatchMode=yes"; }
+rsh() { echo "torsocks ssh -o BatchMode=yes -o IdentitiesOnly=yes -i $HOME/.ssh/id_ed25519"; }
 xfer() { rsync -a --exclude locks -e "$(rsh)" "$1" "$2"; } # xfer from to
 
 cmd_install() { # install restic + rsync + torsocks; refuses restic < 0.14 (can't read current repo format)
@@ -67,9 +67,9 @@ cmd_join() { # join user@onion
   [ -e "$VH/repo" ] && die "vault already here; refusing to overwrite"
   mkdir -p "$VH/repo"
   local pubkey; pubkey=$(cat ~/.ssh/id_ed25519.pub 2>/dev/null || echo PASTE-KEY-HERE)
-  xfer "$seed:$VH/repo/" "$VH/repo/" \
+  xfer "$seed:~/vault/repo/" "$VH/repo/" \
     || die "cannot reach $seed; on $seed run: torSSH.sh auth '$pubkey'"
-  xfer "$seed:$VH/nodes.txt" "$VH/nodes.txt"
+  xfer "$seed:~/vault/nodes.txt" "$VH/nodes.txt"
   grep -qxF "$(me)" "$VH/nodes.txt" || me >> "$VH/nodes.txt"
   if [ -t 0 ]; then restic snapshots >/dev/null && echo "joined; vault readable, password ok"
   else echo "joined; no TTY to verify the password, sync-only for now"; fi
@@ -85,11 +85,11 @@ cmd_sync() {
     case "$n" in ''|'#'*) continue;; esac
     [ "$n" = "$(cat "$VH/self")" ] && continue
     echo "== $n"
-    xfer "$n:$VH/repo/" "$VH/repo/" || { echo "  unreachable, skipped"; continue; }
-    xfer "$n:$VH/nodes.txt" "$VH/nodes.remote" 2>/dev/null \
+    xfer "$n:~/vault/repo/" "$VH/repo/" || { echo "  unreachable, skipped"; continue; }
+    xfer "$n:~/vault/nodes.txt" "$VH/nodes.remote" 2>/dev/null \
       && sort -u "$VH/nodes.txt" "$VH/nodes.remote" > "$VH/nodes.all" && mv "$VH/nodes.all" "$VH/nodes.txt"
-    xfer "$VH/repo/" "$n:$VH/repo/" || echo "  push failed, will retry next run"
-    xfer "$VH/nodes.txt" "$n:$VH/nodes.txt" || true
+    xfer "$VH/repo/" "$n:~/vault/repo/" || echo "  push failed, will retry next run"
+    xfer "$VH/nodes.txt" "$n:~/vault/nodes.txt" || true
   done < "$VH/nodes.txt"
 }
 
