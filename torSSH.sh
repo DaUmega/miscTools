@@ -90,10 +90,17 @@ cmd_serve() {
   local u; u=$(tor_user || true)
   [ -n "$u" ] && sudo chown "$u:$u" "$TOR_HS_DIR"
   sudo chmod 700 "$TOR_HS_DIR"
-  if ! sudo grep -qF "$BEGIN" "$TORRC"; then
-    printf '\n%s\nHiddenServiceDir %s\nHiddenServicePort 22 127.0.0.1:22\n%s\n' \
-      "$BEGIN" "$TOR_HS_DIR" "$END" | sudo tee -a "$TORRC" >/dev/null
-  fi
+  sudo awk -v dir="$TOR_HS_DIR" -v begin="$BEGIN" -v end="$END" '
+    $0 == begin { inmark=1; next }
+    $0 == end { inmark=0; next }
+    inmark { next }
+    $1 == "HiddenServiceDir" && $2 == dir { skip=1; next }
+    $1 == "HiddenServiceDir" { skip=0 }
+    skip && $1 == "HiddenServicePort" { next }
+    { skip=0; print }
+  ' "$TORRC" | sudo tee "$TORRC.tmp" >/dev/null && sudo mv "$TORRC.tmp" "$TORRC"
+  printf '\n%s\nHiddenServiceDir %s\nHiddenServicePort 22 127.0.0.1:22\n%s\n' \
+    "$BEGIN" "$TOR_HS_DIR" "$END" | sudo tee -a "$TORRC" >/dev/null
   sudo systemctl restart tor
   local i; for i in {1..10}; do
     sudo test -f "$TOR_HS_DIR/hostname" && break
