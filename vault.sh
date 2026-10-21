@@ -5,8 +5,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/torSSH.sh | bash -s -- install
 #   (full docs: https://github.com/DaUmega/miscTools/blob/main/torSSH.sh)
 #
-# Direct run (everything comes in as args; the password is typed at the prompt):
-#   curl -fsSL https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/vault.sh | bash -s -- init
+# Direct run not recommended, usage:
+#   wget https://raw.githubusercontent.com/DaUmega/miscTools/refs/heads/main/vault.sh && chmod +x vault.sh
+#   ./vault.sh <command>
 #
 #   install             fetch restic + rsync + torsocks via your package manager
 #   init                first machine only: create vault + node list
