@@ -10,8 +10,8 @@
 #              after approved changes)
 # Run as root. Cron hourly:
 #   0 * * * * /usr/local/bin/hostwatch.sh
-# every minute with token and logs:
-#   * * * * * NOTIFY_URL=https://daumega.duckdns.org/notifier/alert NOTIFY_TOKEN=<token> /home/daumega/Downloads/miscTools/hostwatch.sh [>> /var/log/hostwatch.log 2>&1]
+# one liner, every minute with token and logs:
+#   printf '%s\n' '* * * * * NOTIFY_URL=https://daumega.duckdns.org/notifier/alert NOTIFY_TOKEN=<token> /home/daumega/Downloads/miscTools/hostwatch.sh >> /var/log/hostwatch.log 2>&1' | sudo crontab -
 #
 # Config (edit once, or pass as env):
 #   NOTIFY_URL    full alert URL, e.g. https://domain/notifier/alert
