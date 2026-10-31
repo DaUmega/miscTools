@@ -20,9 +20,9 @@
 
 set -u
 
-NOTIFY_URL=${NOTIFY_URL:-https://daumega.duckdns.org/notifier/alert}
+NOTIFY_URL=${NOTIFY_URL:-}
 NOTIFY_TOKEN=${NOTIFY_TOKEN:-}
-NOTIFY_TOPIC=${NOTIFY_TOPIC:-main}
+NOTIFY_TOPIC=${NOTIFY_TOPIC:-security}
 STATE_DIR=${STATE_DIR:-/var/lib/hostwatch}
 BASE=$STATE_DIR/baseline.txt
 
@@ -137,15 +137,22 @@ REPORT=$TMP/report.txt
   [ -n "$REMOVED" ] && printf 'removed:\n%s\n' "$REMOVED"
 } > "$REPORT"
 
+HOST=$(hostname 2>/dev/null || uname -n)
+TITLE="Security: changes on $HOST"
+RUNUSER=$(id -un 2>/dev/null || echo unknown)
+NOW=$(date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo unknown)
+HEADER="Host: $HOST
+User: $RUNUSER
+Time: $NOW"
 N=$(wc -l < "$REPORT" | tr -d ' ')
-BODY=$(head -50 "$REPORT")
+BODY="$HEADER
+
+$(head -50 "$REPORT")"
 if [ "$N" -gt 50 ]; then
   BODY="$BODY
 ... and $((N - 50)) more lines"
 fi
-HOST=$(hostname 2>/dev/null || uname -n)
-TITLE="Security: changes on $HOST"
-printf '%s\n%s\n' "$TITLE" "$(cat "$REPORT")"
+printf '%s\n%s\n\n%s\n' "$TITLE" "$HEADER" "$(cat "$REPORT")"
 
 if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_TOKEN" ]; then
   if command -v curl >/dev/null 2>&1; then
