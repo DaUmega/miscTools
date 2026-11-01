@@ -11,12 +11,12 @@
 # Run as root. Cron hourly:
 #   0 * * * * /usr/local/bin/hostwatch.sh
 # one liner, every minute with token and logs:
-#   printf '%s\n' '* * * * * NOTIFY_URL=https://daumega.duckdns.org/notifier/alert NOTIFY_TOKEN=<token> /home/daumega/Downloads/miscTools/hostwatch.sh >> /var/log/hostwatch.log 2>&1' | sudo crontab -
+#   printf '%s\n' '* * * * * NOTIFY_URL=https://daumega.duckdns.org/notifier/alert NOTIFY_TOKEN=<token> NOTIFY_TOPIC=tony /home/daumega/Downloads/miscTools/hostwatch.sh >> /var/log/hostwatch.log 2>&1' | sudo crontab -
 #
 # Config (edit once, or pass as env):
 #   NOTIFY_URL    full alert URL, e.g. https://domain/notifier/alert
 #   NOTIFY_TOKEN  token for NOTIFY_TOPIC (mint with add-token)
-#   NOTIFY_TOPIC  feed topic (default security)
+#   NOTIFY_TOPIC  feed topic (no default: set it here or pass as env)
 #   STATE_DIR     baseline dir (default /var/lib/hostwatch)
 # Leave NOTIFY_URL empty to print alerts to stdout only.
 
@@ -24,7 +24,7 @@ set -u
 
 NOTIFY_URL=${NOTIFY_URL:-}
 NOTIFY_TOKEN=${NOTIFY_TOKEN:-}
-NOTIFY_TOPIC=${NOTIFY_TOPIC:-security}
+NOTIFY_TOPIC=${NOTIFY_TOPIC:-}
 STATE_DIR=${STATE_DIR:-/var/lib/hostwatch}
 BASE=$STATE_DIR/baseline.txt
 
@@ -157,7 +157,9 @@ fi
 printf '%s\n%s\n\n%s\n' "$TITLE" "$HEADER" "$(cat "$REPORT")"
 
 if [ -n "$NOTIFY_URL" ] && [ -n "$NOTIFY_TOKEN" ]; then
-  if command -v curl >/dev/null 2>&1; then
+  if [ -z "$NOTIFY_TOPIC" ]; then
+    echo "hostwatch: NOTIFY_TOPIC not set, notify skipped" >&2
+  elif command -v curl >/dev/null 2>&1; then
     curl -s -X POST "$NOTIFY_URL" -H "X-Token: $NOTIFY_TOKEN" \
       -d "{\"title\":\"$(jsonesc "$TITLE")\",\"message\":\"$(jsonesc "$BODY")\",\"topic\":\"$(jsonesc "$NOTIFY_TOPIC")\"}" \
       >/dev/null 2>&1 || echo "hostwatch: notify failed" >&2
